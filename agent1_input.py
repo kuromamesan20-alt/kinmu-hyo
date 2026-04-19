@@ -129,9 +129,11 @@ def load_requests() -> list[StaffRequest]:
     with open(path, encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
+            if row["名前"] is None or row["名前"].strip().startswith("#"):
+                continue
             try:
                 date = datetime.date.fromisoformat(row["日付"].strip())
-            except ValueError:
+            except (ValueError, AttributeError):
                 continue
             requests.append(StaffRequest(
                 name=row["名前"].strip(),
