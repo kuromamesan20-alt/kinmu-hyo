@@ -30,7 +30,7 @@ def normalize_days(text: str, year: int, month: int) -> list[int]:
     text = text.translate(str.maketrans("０１２３４５６７８９", "0123456789"))
     _, last_day = calendar.monthrange(year, month)
     days = []
-    for token in text.replace("、", " ").replace(",", " ").replace("　", " ").split():
+    for token in text.replace("、", " ").replace("，", " ").replace(",", " ").replace("　", " ").split():
         try:
             d = int(token)
             if 1 <= d <= last_day:
