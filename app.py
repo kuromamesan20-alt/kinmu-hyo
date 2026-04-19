@@ -140,7 +140,7 @@ with tab1:
 
     _, last_day = calendar.monthrange(req_year, req_month)
     st.write(f"対象：**{req_year}年{req_month}月**（1〜{last_day}日）")
-    st.caption("休みたい日を半角・全角どちらでも入力できます。複数の日はスペースまたはカンマで区切ってください。例：3 15 25 　または　３、１５、２５")
+    st.caption("休みたい日を半角・全角どちらでも入力できます。複数の日はスペースまたはカンマで区切ってください。例：3 15 25 　または　３、１５、２５　※入力された日はExcelで「休」が赤文字で表示されます。")
     st.divider()
 
     staff_names = load_staff_names()
@@ -193,7 +193,6 @@ with tab2:
                              format_func=lambda m: f"{m}月", key="sched_month")
 
     st.write(f"対象：**{year}年{month}月**")
-    st.caption("※ 希望休申請で入力された休みは、Excelで「休」を赤文字で表示します。")
 
     if st.button("勤務表を作成する", type="primary", key="make_schedule"):
         with st.spinner("シフトを計算中..."):
