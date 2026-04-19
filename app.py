@@ -153,7 +153,7 @@ with tab1:
         val = st.text_input(
             name,
             value=default_text,
-            placeholder="例：3 15 25",
+            placeholder="例：3, 15, 25",
             key=f"req_{name}",
         )
         inputs[name] = val
