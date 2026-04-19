@@ -64,6 +64,15 @@ def apply_design(
     yellow_cells = vr.yellow_cells if vr else set()
     pink_cells  = vr.pink_cells  if vr else set()
 
+    # 希望休セット：(名前, date) で管理
+    req_map = schedule_data.get("req_map", {})
+    kibou_rest = {
+        (name, d)
+        for name, reqs in req_map.items()
+        for d, req in reqs.items()
+        if req.req_type == "希望休"
+    }
+
     NAME_COL      = 1
     DATE_START_COL = 2
     HEADER_ROW    = 1
@@ -140,17 +149,25 @@ def apply_design(
             cell.font      = _font(bold=(shift in ("準", "深")), size=9)
             cell.border    = _border(is_sun_col(col))
 
-            # 優先: 人員不足セル（赤）
+            # 優先: 人員不足セル（赤背景）
             if (s.name, d) in red_cells:
                 cell.fill = _fill(COLOR_RED_ALERT)
                 cell.font = _font(color="FFFFFF", bold=True, size=9)
             # 認知症加算（黄）
             elif (s.name, d) in yellow_cells:
                 cell.fill = _fill(COLOR_YELLOW)
+                if shift == "休" and (s.name, d) in kibou_rest:
+                    cell.font = _font(color="FF0000", size=9)
             # 中重度加算（薄ピンク）
             elif (s.name, d) in pink_cells:
                 cell.fill = _fill(COLOR_PINK_NURSE)
-            # 全てのシフト → 背景なし
+                if shift == "休" and (s.name, d) in kibou_rest:
+                    cell.font = _font(color="FF0000", size=9)
+            # 希望休（赤文字）
+            elif shift == "休" and (s.name, d) in kibou_rest:
+                cell.fill = _no_fill()
+                cell.font = _font(color="FF0000", size=9)
+            # 通常
             else:
                 cell.fill = _no_fill()
 
@@ -202,14 +219,18 @@ def apply_design(
         ("黄", COLOR_YELLOW,     "認知症加算対象者が日勤"),
         ("薄ピンク", COLOR_PINK_NURSE, "中重度加算条件達成（看護師）"),
         ("赤", COLOR_RED_ALERT,  "人員不足（警告）"),
+        ("赤文字", None,         "希望休申請による休み"),
     ]
     for k, (label, color, desc) in enumerate(legend_items):
         r = legend_row + 1 + k
         ws.cell(row=r, column=NAME_COL, value=f"　{desc}").font = _font(size=9)
         mark = ws.cell(row=r, column=NAME_COL + 1, value=label)
-        mark.fill      = _fill(color)
+        if color:
+            mark.fill = _fill(color)
+        else:
+            mark.fill = _no_fill()
+            mark.font = _font(color="FF0000", size=9)
         mark.alignment = _center()
-        mark.font      = _font(size=9)
 
 
 if __name__ == "__main__":

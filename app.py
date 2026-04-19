@@ -193,6 +193,7 @@ with tab2:
                              format_func=lambda m: f"{m}月", key="sched_month")
 
     st.write(f"対象：**{year}年{month}月**")
+    st.caption("※ 希望休申請で入力された休みは、Excelで「休」を赤文字で表示します。")
 
     if st.button("勤務表を作成する", type="primary", key="make_schedule"):
         with st.spinner("シフトを計算中..."):
