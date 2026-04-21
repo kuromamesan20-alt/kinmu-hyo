@@ -248,7 +248,8 @@ def _assign_night_shift(stype, d, dates, schedule, req_map, staff_list):
         return
     night_ok = [s for s in staff_list
                 if s.night_ok and not s.sara_only and not s.delivery_only
-                and s.name != "稲葉耕太"]
+                and s.name != "稲葉耕太"
+                and not (s.jun_only and stype == "深")]
     cands = [s for s in night_ok
              if _can_assign(s.name, d, dates, schedule, req_map)
              and not _next_day_occupied(s.name, d, dates, schedule)]
