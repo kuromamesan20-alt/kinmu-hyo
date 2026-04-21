@@ -41,6 +41,12 @@ NURSE_STAFF = {"石橋泉子", "川野藍", "工藤泉", "曽我久美子", "中
 # 準夜のみOK（深夜不可）
 JUN_ONLY_STAFF = {"安部稚畝"}
 
+# 週2休み厳守スタッフ（日曜〜土曜で必ずちょうど2日休み）
+WEEKLY_2REST_STAFF = {
+    "出野聡子", "大久保夏南", "坂本雅代", "安部稚畝",
+    "稲継大稀", "岡田健吾", "岡谷佳代子", "平野由美"
+}
+
 # A・P禁止スタッフ（明示）
 AP_FORBIDDEN = {
     "出野聡子", "大久保夏南", "坂本雅代", "安部稚畝",
@@ -75,6 +81,7 @@ class StaffInfo:
     is_priority: bool = False
     count_excluded: bool = False  # 人数カウント除外
     jun_only: bool = False  # 準夜のみOK（深夜不可）
+    weekly_2rest: bool = False  # 週2休み厳守
 
 
 def load_staff() -> list[StaffInfo]:
@@ -112,6 +119,7 @@ def load_staff() -> list[StaffInfo]:
             s.jun_only = name in JUN_ONLY_STAFF
             if s.jun_only:
                 s.night_ok = True  # 準夜のみだが夜勤枠には入れる
+            s.weekly_2rest = name in WEEKLY_2REST_STAFF
             # 管理者・送迎・皿洗い・事務はカウント除外
             s.count_excluded = s.role in {"管理者", "送迎", "皿洗い", "事務"} or name == "稲葉耕太"
 

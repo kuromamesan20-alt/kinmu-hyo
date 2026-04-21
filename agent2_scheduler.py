@@ -9,7 +9,7 @@ from agent1_input import (
     StaffInfo, build_input,
     A_ONLY_STAFF, AP_STAFF, AP_ALLOWED, AP_FORBIDDEN,
     YUKI_STAFF, SARA_STAFF, NINCHI_STAFF, NURSE_STAFF, PRIORITY_STAFF,
-    SHIFT_HOURS
+    SHIFT_HOURS, WEEKLY_2REST_STAFF
 )
 
 AM_NORM = 7
@@ -68,7 +68,82 @@ def build_schedule(year: int, month: int, input_data: dict) -> dict:
             if schedule[s.name][d] == "":
                 schedule[s.name][d] = "休"
 
+    # Phase3: 週2休み厳守スタッフの調整
+    _balance_weekly_rest(staff_list, dates, schedule, req_map)
+
     return schedule
+
+
+# ── Phase 3: 週2休み調整 ──────────────────────────────────────────────
+
+def _get_sunday_weeks(dates):
+    """日付リストを日曜始まりの週ごとにグループ化"""
+    from collections import defaultdict
+    weeks = defaultdict(list)
+    for d in dates:
+        days_since_sunday = (d.weekday() + 1) % 7
+        week_start = d - datetime.timedelta(days=days_since_sunday)
+        weeks[week_start].append(d)
+    return [sorted(v) for v in sorted(weeks.values())]
+
+
+def _balance_weekly_rest(staff_list, dates, schedule, req_map):
+    """週2休み厳守スタッフの休みを週単位でちょうど2日に調整"""
+    two_rest_staff = [s for s in staff_list if s.weekly_2rest]
+    if not two_rest_staff:
+        return
+
+    weeks = _get_sunday_weeks(dates)
+
+    for s in two_rest_staff:
+        for week in weeks:
+            # 部分週はスキップ（月初・月末の端数週）
+            if len(week) < 7:
+                continue
+
+            rest_days = [d for d in week if schedule[s.name][d] == "休"]
+            rest_count = len(rest_days)
+
+            if rest_count == 2:
+                continue
+
+            def is_kibou_rest(d):
+                req = req_map.get(s.name, {}).get(d)
+                return req and req.req_type == "希望休"
+
+            if rest_count > 2:
+                # 休みが多い → 余分な休みを日勤に変換
+                excess = rest_count - 2
+                changed = 0
+                for d in rest_days:
+                    if changed >= excess:
+                        break
+                    if is_kibou_rest(d):
+                        continue
+                    idx = dates.index(d)
+                    prev = schedule[s.name].get(dates[idx - 1], "") if idx > 0 else ""
+                    if prev in ("深", "準"):
+                        continue
+                    am_count = sum(
+                        1 for st in staff_list
+                        if not st.count_excluded and schedule[st.name].get(d) in ("日", "A")
+                    )
+                    if am_count >= AM_NORM:
+                        continue
+                    schedule[s.name][d] = "日"
+                    changed += 1
+
+            else:
+                # 休みが少ない → 変更可能な勤務を休みに変換
+                deficit = 2 - rest_count
+                changeable = [
+                    d for d in week
+                    if schedule[s.name][d] not in ("休", "深", "準", "早", "夕", "A", "P", "事務", "相", "皿洗い", "送迎")
+                    and not (req_map.get(s.name, {}).get(d)
+                             and req_map[s.name][d].req_type == "希望シフト")
+                ]
+                for d in changeable[:deficit]:
+                    schedule[s.name][d] = "休"
 
 
 # ── Phase 1: 固定割り当て ─────────────────────────────────────────────
