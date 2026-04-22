@@ -10,7 +10,7 @@ from agent1_input import (
 )
 
 
-AM_NORM = 7   # 午前ノルマ
+AM_NORM = 6   # 午前ノルマ
 PM_NORM = 6   # 午後ノルマ
 
 
