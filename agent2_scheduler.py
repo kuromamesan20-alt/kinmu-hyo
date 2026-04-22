@@ -12,7 +12,7 @@ from agent1_input import (
     SHIFT_HOURS, WEEKLY_2REST_STAFF
 )
 
-AM_NORM = 7
+AM_NORM = 6
 PM_NORM = 6
 WORK_SHIFTS = {"早", "日", "A", "P", "準", "深", "夕"}
 
