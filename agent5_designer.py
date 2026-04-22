@@ -14,7 +14,11 @@ COLOR_WEEKDAY_ROW = "D9E1F2"   # 曜日行背景
 COLOR_REST        = "FFB6C1"   # 休 → ピンク
 COLOR_YELLOW      = "FFFF99"   # 認知症加算（黄）
 COLOR_PINK_NURSE  = "FFD9E8"   # 中重度加算（薄ピンク）
-COLOR_RED_ALERT   = "FF0000"   # 人員不足（赤）
+
+AM_NORM = 6
+PM_NORM = 6
+# 集計行のj番目（0=separator,1=早,2=am,3=pm,...）→ 基準人数
+_SUMMARY_NORMS = {2: AM_NORM, 3: PM_NORM}
 
 COLOR_SUMMARY_BG  = "F2F2F2"   # 集計行背景
 
@@ -149,12 +153,8 @@ def apply_design(
             cell.font      = _font(bold=(shift in ("準", "深")), size=9)
             cell.border    = _border(is_sun_col(col))
 
-            # 優先: 人員不足セル（赤背景）
-            if (s.name, d) in red_cells:
-                cell.fill = _fill(COLOR_RED_ALERT)
-                cell.font = _font(color="FFFFFF", bold=True, size=9)
             # 認知症加算（黄）
-            elif (s.name, d) in yellow_cells:
+            if (s.name, d) in yellow_cells:
                 cell.fill = _fill(COLOR_YELLOW)
                 if shift == "休" and (s.name, d) in kibou_rest:
                     cell.font = _font(color="FF0000", size=9)
@@ -184,8 +184,12 @@ def apply_design(
             cell = ws.cell(row=row, column=col)
             cell.fill      = _fill(COLOR_SUMMARY_BG)
             cell.alignment = _center()
-            cell.font      = _font(size=9)
             cell.border    = _border(is_sun_col(col))
+            val = cell.value
+            if j in _SUMMARY_NORMS and isinstance(val, int) and val < _SUMMARY_NORMS[j]:
+                cell.font = _font(color="FF0000", bold=True, size=9)
+            else:
+                cell.font = _font(size=9)
 
     # ── 外枠太線（上下左右）─────────────────────────────────────────
     for col in range(NAME_COL, total_cols + 1):
@@ -218,7 +222,7 @@ def apply_design(
     legend_items = [
         ("黄", COLOR_YELLOW,     "認知症加算対象者が日勤"),
         ("薄ピンク", COLOR_PINK_NURSE, "中重度加算条件達成（看護師）"),
-        ("赤", COLOR_RED_ALERT,  "人員不足（警告）"),
+        ("赤文字(集計)", None,    "午前/午後の人数が基準未満"),
         ("赤文字", None,         "希望休申請による休み"),
     ]
     for k, (label, color, desc) in enumerate(legend_items):
