@@ -112,7 +112,7 @@ def _balance_weekly_rest(staff_list, dates, schedule, req_map):
                 return req and req.req_type == "希望休"
 
             if rest_count > 2:
-                # 休みが多い → 余分な休みを日勤に変換
+                # 休みが多い → 余分な休みを日勤に変換（AM_NORMより週2休み厳守を優先）
                 excess = rest_count - 2
                 changed = 0
                 for d in rest_days:
@@ -124,26 +124,34 @@ def _balance_weekly_rest(staff_list, dates, schedule, req_map):
                     prev = schedule[s.name].get(dates[idx - 1], "") if idx > 0 else ""
                     if prev in ("深", "準"):
                         continue
-                    am_count = sum(
-                        1 for st in staff_list
-                        if not st.count_excluded and schedule[st.name].get(d) in ("日", "A")
-                    )
-                    if am_count >= AM_NORM:
-                        continue
                     schedule[s.name][d] = "日"
                     changed += 1
 
             else:
                 # 休みが少ない → 変更可能な勤務を休みに変換
                 deficit = 2 - rest_count
+                # まず「日」を優先的に休みに変換
                 changeable = [
                     d for d in week
-                    if schedule[s.name][d] not in ("休", "深", "準", "早", "夕", "A", "P", "事務", "相", "皿洗い", "送迎")
+                    if schedule[s.name][d] == "日"
                     and not (req_map.get(s.name, {}).get(d)
                              and req_map[s.name][d].req_type == "希望シフト")
                 ]
-                for d in changeable[:deficit]:
+                converted = changeable[:deficit]
+                for d in converted:
                     schedule[s.name][d] = "休"
+                deficit -= len(converted)
+                # 「日」だけでは足りない場合、早出人数が0にならない日の「早」も変換対象に
+                if deficit > 0:
+                    changeable2 = [
+                        d for d in week
+                        if schedule[s.name][d] == "早"
+                        and not (req_map.get(s.name, {}).get(d)
+                                 and req_map[s.name][d].req_type == "希望シフト")
+                        and sum(1 for st in staff_list if schedule[st.name][d] == "早") > 1
+                    ]
+                    for d in changeable2[:deficit]:
+                        schedule[s.name][d] = "休"
 
 
 # ── Phase 1: 固定割り当て ─────────────────────────────────────────────
