@@ -447,6 +447,14 @@ def _balance_nurse_coverage(staff_list, dates, schedule, req_map):
                             continue
                         if not _can_work(nx.name, src, pretend_rest=tgt):
                             continue
+                        # 週2休み厳守スタッフ: スワップでsrc週の休みが2未満に減るなら不可
+                        if nx.weekly_2rest:
+                            days_since_sun = (src.weekday() + 1) % 7
+                            ws = src - datetime.timedelta(days=days_since_sun)
+                            src_week = [dd for dd in dates if ws <= dd < ws + datetime.timedelta(days=7)]
+                            src_rest = sum(1 for dd in src_week if schedule[nx.name].get(dd) == "休")
+                            if len(src_week) == 7 and src_rest - 1 < 2:
+                                continue
                         # 日↔日スワップ → AM/PM両日で不変
                         schedule[nurse.name][src] = "休"
                         schedule[nurse.name][tgt] = "日"
