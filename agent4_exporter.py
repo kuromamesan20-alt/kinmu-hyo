@@ -42,6 +42,14 @@ def export_to_excel(schedule_data: dict, validation_result=None) -> Path:
         ws.cell(row=HEADER_ROW, column=col, value=d.day)
         ws.cell(row=HEADER_ROW + 1, column=col, value=WEEKDAY_JP[d.weekday()])
 
+    # ── 個人集計列ヘッダー ────────────────────────────────────────────
+    PERSONAL_SUMMARY_LABELS = ["早出", "日勤", "A/P", "準夜", "深夜", "休み"]
+    personal_summary_start_col = DATE_START_COL + len(dates)
+    for k, label in enumerate(PERSONAL_SUMMARY_LABELS):
+        col = personal_summary_start_col + k
+        ws.cell(row=HEADER_ROW, column=col, value=label)
+        ws.cell(row=HEADER_ROW + 1, column=col, value="")
+
     # ── スタッフ行 ────────────────────────────────────────────────────
     staff_rows: dict[str, int] = {}
     for row_idx, s in enumerate(staff_list):
@@ -54,6 +62,19 @@ def export_to_excel(schedule_data: dict, validation_result=None) -> Path:
             col = DATE_START_COL + i
             shift = schedule[s.name].get(d, "")
             ws.cell(row=row, column=col, value=shift)
+
+        # 個人集計
+        shifts = [schedule[s.name].get(d, "") for d in dates]
+        personal_counts = [
+            shifts.count("早"),
+            shifts.count("日"),
+            shifts.count("A") + shifts.count("P"),
+            shifts.count("準"),
+            shifts.count("深"),
+            shifts.count("休"),
+        ]
+        for k, cnt in enumerate(personal_counts):
+            ws.cell(row=row, column=personal_summary_start_col + k, value=cnt)
 
     # ── 集計行 ────────────────────────────────────────────────────────
     summary_start_row = STAFF_START_ROW + 1 + len(staff_list) + 1
