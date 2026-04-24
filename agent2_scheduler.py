@@ -269,8 +269,7 @@ def _balance_weekly_4work(staff_list, dates, schedule, req_map):
                     if prev in ("深", "準"):
                         continue
                     inaba_off = schedule.get("稲葉耕太", {}).get(d, "") == "休"
-                    anbe_active = schedule.get("安部稚畝", {}).get(d, "") in ("早", "日")
-                    day_norm = 7 if (inaba_off or anbe_active) else AM_NORM
+                    day_norm = 7 if inaba_off else AM_NORM
                     countable_names = {
                         st.name for st in staff_list
                         if not st.count_excluded and not st.sara_only and not st.delivery_only
