@@ -160,6 +160,21 @@ def _balance_weekly_rest(staff_list, dates, schedule, req_map):
                     )
                     if am_now >= day_norm:
                         continue  # ノルム達成済みなので日勤追加しない
+                    # 変換後に連続5日以上にならないか確認
+                    before_chain = 0
+                    for k in range(idx - 1, -1, -1):
+                        if schedule[s.name].get(dates[k], "") in WORK_SHIFTS:
+                            before_chain += 1
+                        else:
+                            break
+                    after_chain = 0
+                    for k in range(idx + 1, len(dates)):
+                        if schedule[s.name].get(dates[k], "") in WORK_SHIFTS:
+                            after_chain += 1
+                        else:
+                            break
+                    if before_chain + 1 + after_chain >= 5:
+                        continue  # 連続5日以上になるので変換しない
                     schedule[s.name][d] = "日"
                     changed += 1
 
@@ -573,6 +588,10 @@ def _night_would_overflow(s, d, dates, schedule):
         days_since_sun = (dt.weekday() + 1) % 7
         return dt - datetime.timedelta(days=days_since_sun)
 
+    # 翌日が既に休みなら準/深を入れても追加の休みは発生しない
+    if schedule[s.name].get(next_d, "") == "休":
+        return False
+
     # 翌日が属する週の休み数を確認
     next_week_start = week_start_of(next_d)
     next_week_end = next_week_start + datetime.timedelta(days=7)
@@ -583,6 +602,21 @@ def _night_would_overflow(s, d, dates, schedule):
 
 
 # ── 2a: 夜勤 ─────────────────────────────────────────────────────────
+
+def _night_rest_in_next_week(s, d, dates, schedule):
+    """翌日が属する週の確定休み数を返す（フォールバック選択の優先度に使用）"""
+    idx = dates.index(d)
+    if idx + 1 >= len(dates):
+        return 0
+    next_d = dates[idx + 1]
+    def week_start_of(dt):
+        days_since_sun = (dt.weekday() + 1) % 7
+        return dt - datetime.timedelta(days=days_since_sun)
+    nws = week_start_of(next_d)
+    nwe = nws + datetime.timedelta(days=7)
+    nw_days = [dd for dd in dates if nws <= dd < nwe]
+    return sum(1 for dd in nw_days if schedule[s.name].get(dd) == "休")
+
 
 def _assign_night_shift(stype, d, dates, schedule, req_map, staff_list):
     if any(schedule[s.name][d] == stype for s in staff_list):
@@ -610,6 +644,15 @@ def _assign_night_shift(stype, d, dates, schedule, req_map, staff_list):
                  and not _next_day_occupied(s.name, d, dates, schedule)
                  and not _next_day_is_kibou_rest(s, d)
                  and not _night_would_overflow(s, d, dates, schedule)]
+        if not cands:
+            # フォールバック: overflow以外の条件をパスする候補（最後の手段）
+            cands = [s for s in night_ok
+                     if schedule[s.name][d] == ""
+                     and not (req_map.get(s.name, {}).get(d) and req_map[s.name][d].req_type == "希望休")
+                     and _prev_shift(s.name, d, dates, schedule) != "深"
+                     and _consecutive_before(s.name, d, dates, schedule) < 4
+                     and not _next_day_occupied(s.name, d, dates, schedule)
+                     and not _next_day_is_kibou_rest(s, d)]
     else:
         # 準：WEEKLY_2REST_STAFFは、準を入れると翌日強制休みになるため
         # その週の確定休み＋準翌日休みが2日を超える場合は除外
@@ -617,7 +660,14 @@ def _assign_night_shift(stype, d, dates, schedule, req_map, staff_list):
                  if _can_assign(s.name, d, dates, schedule, req_map)
                  and not _next_day_occupied(s.name, d, dates, schedule)
                  and not _night_would_overflow(s, d, dates, schedule)]
+        if not cands:
+            # フォールバック: overflow以外の条件をパスする候補（最後の手段）
+            cands = [s for s in night_ok
+                     if _can_assign(s.name, d, dates, schedule, req_map)
+                     and not _next_day_occupied(s.name, d, dates, schedule)]
+    # 翌日週の確定休み数が少ない順（Phase3が修正しやすい候補を優先）→ 夜勤回数少ない順
     cands.sort(key=lambda s: (
+        _night_rest_in_next_week(s, d, dates, schedule),
         sum(1 for dd in dates if schedule[s.name].get(dd) in ("準","深")),
     ))
     if cands:
