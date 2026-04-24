@@ -9,7 +9,7 @@ from agent1_input import (
     StaffInfo, build_input,
     A_ONLY_STAFF, AP_STAFF, AP_ALLOWED, AP_FORBIDDEN,
     YUKI_STAFF, SARA_STAFF, NINCHI_STAFF, NURSE_STAFF, PRIORITY_STAFF,
-    SHIFT_HOURS, WEEKLY_2REST_STAFF, WEEKLY_4WORK_STAFF
+    SHIFT_HOURS, WEEKLY_2REST_STAFF, WEEKLY_4WORK_STAFF, AP_NO_LIMIT_STAFF
 )
 
 AM_NORM = 6
@@ -22,9 +22,10 @@ def get_month_dates(year: int, month: int) -> list:
     return [datetime.date(year, month, d) for d in range(1, last_day + 1)]
 
 
-def calc_monthly_target(s: StaffInfo, year: int, month: int) -> int:
+def calc_monthly_target(s: StaffInfo, year: int, month: int) -> float:
+    """月間目標を時間で返す（週勤務日数×8h×月日数÷7）"""
     _, last_day = calendar.monthrange(year, month)
-    return round(s.weekly_days * last_day / 7)
+    return s.weekly_days * 8 * last_day / 7
 
 
 def build_schedule(year: int, month: int, input_data: dict) -> dict:
@@ -804,8 +805,7 @@ def _assign_daytime_shift(d, day_idx, days_remaining, dates, schedule,
     )
 
     def score(s):
-        work_so_far = sum(1 for dd in dates
-                          if schedule[s.name].get(dd, "") in WORK_SHIFTS | {"事務","相"})
+        work_so_far = sum(SHIFT_HOURS.get(schedule[s.name].get(dd, ""), 0) for dd in dates)
         needed = max(0, targets[s.name] - work_so_far)
         urgency = needed / days_remaining if days_remaining > 0 else 0
         pri = (0 if s.is_priority else 0.1) + (0 if s.name in NINCHI_STAFF else 0.05)
@@ -826,8 +826,7 @@ def _assign_daytime_shift(d, day_idx, days_remaining, dates, schedule,
         if am_count >= am_norm and pm_count >= pm_norm:
             break
 
-        work_so_far = sum(1 for dd in dates
-                          if schedule[s.name].get(dd, "") in WORK_SHIFTS | {"事務","相"})
+        work_so_far = sum(SHIFT_HOURS.get(schedule[s.name].get(dd, ""), 0) for dd in dates)
         if work_so_far >= targets[s.name]:
             schedule[s.name][d] = "休"
             continue
@@ -835,10 +834,11 @@ def _assign_daytime_shift(d, day_idx, days_remaining, dates, schedule,
         need_am = am_count < am_norm
         need_pm = pm_count < pm_norm
 
-        # A/P週1回制限チェック（AP_STAFFの全員）
+        # A/P週制限チェック（AP_NO_LIMIT_STAFFは制限なし）
         ap_weekly_full = (
             s.name in AP_STAFF
             and s.name not in A_ONLY_STAFF
+            and s.name not in AP_NO_LIMIT_STAFF
             and _week_ap_count(s.name, d, dates, schedule) >= 1
         )
         # A_ONLYはAのみ可能だが週複数回OK（制限対象外）

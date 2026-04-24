@@ -15,7 +15,7 @@ DATA_DIR = Path(__file__).parent / "data"
 SHIFT_HOURS = {
     "早": 8, "日": 8, "A": 4, "P": 4,
     "準": 8, "深": 8, "夕": 4, "送迎": 4,
-    "相": 8, "事務": 8, "皿洗い": 4, "休": 0, "": 0
+    "相": 8, "事務": 8, "計": 8, "皿洗い": 4, "休": 0, "": 0
 }
 
 # A・P可能スタッフ（Aのみ / A・P両方）
@@ -28,6 +28,9 @@ YUKI_STAFF = {"塩内由可", "東山鼓"}
 
 # 週4日勤固定スタッフ（週に日勤ちょうど4日・夕不可）
 WEEKLY_4WORK_STAFF = {"福山圭子"}
+
+# A/P週1回制限なしスタッフ（週労働時間内ならA・Pを複数回入れてよい）
+AP_NO_LIMIT_STAFF = {"東山鼓", "塩内由可", "谷口直子", "曽我久美子"}
 
 # 送迎担当
 DELIVERY_STAFF = {"堀太"}
@@ -199,6 +202,7 @@ def build_input(year: int, month: int) -> dict:
             "PRIORITY_STAFF": PRIORITY_STAFF,
             "SHIFT_HOURS": SHIFT_HOURS,
             "WEEKLY_4WORK_STAFF": WEEKLY_4WORK_STAFF,
+            "AP_NO_LIMIT_STAFF": AP_NO_LIMIT_STAFF,
         }
     }
 
