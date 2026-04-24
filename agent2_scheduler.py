@@ -143,6 +143,20 @@ def _balance_weekly_rest(staff_list, dates, schedule, req_map):
                             schedule[s.name][d] = "深"
                             changed += 1
                         continue
+                    # AMノルムを超える日への日勤追加は行わない
+                    inaba_off = schedule.get("稲葉耕太", {}).get(d, "") == "休"
+                    anbe_active = schedule.get("安部稚畝", {}).get(d, "") in ("早", "日")
+                    day_norm = 7 if (inaba_off or anbe_active) else AM_NORM
+                    countable_names = {
+                        st.name for st in staff_list
+                        if not st.count_excluded and not st.sara_only and not st.delivery_only
+                    }
+                    am_now = sum(
+                        1 for st in staff_list
+                        if st.name in countable_names and schedule[st.name].get(d) in ("日", "A")
+                    )
+                    if am_now >= day_norm:
+                        continue  # ノルム達成済みなので日勤追加しない
                     schedule[s.name][d] = "日"
                     changed += 1
 
