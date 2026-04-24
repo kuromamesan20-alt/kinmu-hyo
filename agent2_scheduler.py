@@ -75,6 +75,9 @@ def build_schedule(year: int, month: int, input_data: dict) -> dict:
     # Phase3: 週2休み厳守スタッフの調整
     _balance_weekly_rest(staff_list, dates, schedule, req_map)
 
+    # Phase4: 中重度加算の看護師配置バランス後処理
+    _balance_nurse_coverage(staff_list, dates, schedule, req_map)
+
     return schedule
 
 
@@ -188,6 +191,163 @@ def _balance_weekly_rest(staff_list, dates, schedule, req_map):
                     ]
                     for d in changeable2[:deficit]:
                         schedule[s.name][d] = "休"
+
+
+# ── Phase 4: 中重度加算バランス後処理 ───────────────────────────────────
+
+def _balance_nurse_coverage(staff_list, dates, schedule, req_map):
+    """
+    中重度加算が取れない日を最大化する後処理。
+    AM/PMノルムを崩さないため、以下の2操作のみ行う：
+      策1: ノルム未達日に看護師を直接追加（ノルム範囲内のみ）
+      策2: 3名以上日と不足日で「看護師(日)↔非看護師(日)」スワップ
+           ※日↔日のみでAM/PM両方±1 → バランス保持
+    """
+    nurses = [s for s in staff_list if s.is_nurse]
+    non_a_nurses = [s for s in nurses if not s.a_only]
+    countable = [s for s in staff_list if not s.count_excluded and not s.sara_only and not s.delivery_only]
+    non_nurses = [s for s in countable if not s.is_nurse
+                  and not s.sara_only and not s.delivery_only]
+
+    def _am(d):
+        return sum(1 for s in countable if schedule[s.name].get(d, "") in ("日", "A"))
+
+    def _pm(d):
+        return sum(1 for s in countable if schedule[s.name].get(d, "") in ("日", "P"))
+
+    def _norm(d):
+        inaba_off = schedule.get("稲葉耕太", {}).get(d, "") == "休"
+        return 7 if inaba_off else AM_NORM
+
+    def _nurses_on(d):
+        return [s for s in nurses if schedule[s.name].get(d, "") in ("日", "A", "P")]
+
+    def _req_rest(name, d):
+        return (name in req_map and req_map[name].get(d) is not None
+                and req_map[name][d].req_type == "希望休")
+
+    def _can_work(name, d, pretend_rest=None):
+        if _req_rest(name, d):
+            return False
+        idx = dates.index(d)
+        if idx > 0:
+            prev = dates[idx - 1]
+            ps = schedule[name].get(prev, "") if prev != pretend_rest else "休"
+            if ps in ("深", "準"):
+                return False
+        consecutive = 0
+        for i in range(idx - 1, max(idx - 5, -1), -1):
+            dd = dates[i]
+            sh = schedule[name].get(dd, "") if dd != pretend_rest else "休"
+            if sh in ("早", "日", "A", "P", "準", "深", "夕"):
+                consecutive += 1
+            else:
+                break
+        return consecutive < 4
+
+    def _is_met(d):
+        nods = _nurses_on(d)
+        return (any(schedule[s.name].get(d) == "日" for s in nods) and len(nods) >= 2)
+
+    for _ in range(100):
+        deficit_days = [d for d in dates if not _is_met(d)]
+        if not deficit_days:
+            break
+        surplus_days = sorted(
+            [d for d in dates if len(_nurses_on(d)) >= 3],
+            key=lambda d: len(_nurses_on(d)), reverse=True
+        )
+        improved = False
+
+        for tgt in deficit_days:
+            tgt_norm = _norm(tgt)
+            tgt_am = _am(tgt)
+            tgt_pm = _pm(tgt)
+            tgt_nurses = _nurses_on(tgt)
+            need_day = not any(schedule[s.name].get(tgt) == "日" for s in tgt_nurses)
+
+            # ── 策1a: AM/PMともにノルム未達 → 日勤追加 ─────────────────
+            if tgt_am < tgt_norm and tgt_pm < tgt_norm:
+                for nurse in non_a_nurses:
+                    if schedule[nurse.name].get(tgt, "") not in ("休", ""):
+                        continue
+                    if not _can_work(nurse.name, tgt):
+                        continue
+                    if tgt_am + 1 > tgt_norm or tgt_pm + 1 > tgt_norm:
+                        continue
+                    schedule[nurse.name][tgt] = "日"
+                    improved = True
+                    break
+
+            # ── 策1b: PM不足・AM満員 → P追加（日勤ナース不要の場合のみ）─
+            if not improved and tgt_am >= tgt_norm and tgt_pm < tgt_norm and not need_day:
+                for nurse in non_a_nurses:
+                    if schedule[nurse.name].get(tgt, "") not in ("休", ""):
+                        continue
+                    if not nurse.ap_allowed or nurse.name in AP_FORBIDDEN:
+                        continue
+                    if not _can_work(nurse.name, tgt):
+                        continue
+                    if tgt_pm + 1 > tgt_norm:
+                        continue
+                    schedule[nurse.name][tgt] = "P"
+                    improved = True
+                    break
+
+            if improved:
+                break
+
+            # ── 策2: 余剰日と不足日で 日(看護師)↔日(非看護師) スワップ──
+            for src in surplus_days:
+                if src == tgt:
+                    continue
+                src_nurses_on = _nurses_on(src)
+                if len(src_nurses_on) < 3:
+                    continue
+
+                for nurse in src_nurses_on:
+                    if nurse.a_only:
+                        continue
+                    if schedule[nurse.name].get(src, "") != "日":
+                        continue
+                    if schedule[nurse.name].get(tgt, "") != "休":
+                        continue
+                    if need_day and nurse.a_only:
+                        continue
+                    # src: 加算条件が崩れないか
+                    remaining = [s for s in src_nurses_on if s.name != nurse.name]
+                    if not any(schedule[s.name].get(src) == "日" for s in remaining):
+                        continue
+                    if len(remaining) < 2:
+                        continue
+                    if not _can_work(nurse.name, tgt, pretend_rest=src):
+                        continue
+                    # 非看護師スワップ相手（tgt で日、src で休）
+                    for nx in non_nurses:
+                        if schedule[nx.name].get(tgt, "") != "日":
+                            continue
+                        if schedule[nx.name].get(src, "") != "休":
+                            continue
+                        if _req_rest(nx.name, src):
+                            continue
+                        if not _can_work(nx.name, src, pretend_rest=tgt):
+                            continue
+                        # 日↔日スワップ → AM/PM両日で不変
+                        schedule[nurse.name][src] = "休"
+                        schedule[nurse.name][tgt] = "日"
+                        schedule[nx.name][src] = "日"
+                        schedule[nx.name][tgt] = "休"
+                        improved = True
+                        break
+                    if improved:
+                        break
+                if improved:
+                    break
+            if improved:
+                break
+
+        if not improved:
+            break
 
 
 # ── Phase 1: 固定割り当て ─────────────────────────────────────────────
@@ -492,13 +652,32 @@ def _assign_daytime_shift(d, day_idx, days_remaining, dates, schedule,
     avail = [s for s in countable
              if _can_assign(s.name, d, dates, schedule, req_map)]
 
+    # 中重度加算：この日に既に何人のナースが日/A/P で入っているか
+    nurses_on_day = sum(
+        1 for st in countable
+        if st.is_nurse and schedule[st.name].get(d, "") in ("日", "A", "P")
+    )
+    nurses_day_now = sum(
+        1 for st in countable
+        if st.is_nurse and schedule[st.name].get(d, "") == "日"
+    )
+
     def score(s):
         work_so_far = sum(1 for dd in dates
                           if schedule[s.name].get(dd, "") in WORK_SHIFTS | {"事務","相"})
         needed = max(0, targets[s.name] - work_so_far)
         urgency = needed / days_remaining if days_remaining > 0 else 0
         pri = (0 if s.is_priority else 0.1) + (0 if s.name in NINCHI_STAFF else 0.05)
-        return -(urgency + pri)
+        # 中重度加算バランス（優先度調整のみ、ハードキャップはPhase4で）
+        nurse_adj = 0.0
+        if s.is_nurse:
+            if nurses_on_day == 0:
+                nurse_adj = 0.7
+            elif nurses_on_day == 1:
+                nurse_adj = 0.5 if nurses_day_now == 0 else 0.3
+            else:
+                nurse_adj = -0.3  # 3人目以降は後回し（但し目標未達なら自然と上がる）
+        return -(urgency + pri + nurse_adj)
 
     avail.sort(key=score)
 
