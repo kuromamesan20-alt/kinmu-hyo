@@ -74,8 +74,70 @@ def load_existing_requests(year: int, month: int) -> dict[str, list[int]]:
     return result
 
 
+FIELDNAMES = ["名前", "日付", "希望種別", "シフト", "備考"]
+GITHUB_OWNER = "kuromamesan20-alt"
+GITHUB_REPO  = "kinmu-hyo"
+GITHUB_PATH  = "data/requests.csv"
+
+
+def _build_csv_str(comment_lines: list, all_rows: list) -> str:
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=FIELDNAMES, extrasaction="ignore")
+    writer.writeheader()
+    for row in comment_lines:
+        writer.writerow(row)
+    for row in all_rows:
+        writer.writerow(row)
+    return buf.getvalue()
+
+
+def _push_to_github(content: str):
+    """GitHub APIでrequests.csvを更新（GITHUB_TOKENがある場合のみ）"""
+    import urllib.request, urllib.error, json, base64
+    try:
+        token = st.secrets["GITHUB_TOKEN"]
+    except (KeyError, FileNotFoundError):
+        return  # ローカル実行時はスキップ
+
+    api_url = (f"https://api.github.com/repos/{GITHUB_OWNER}"
+               f"/{GITHUB_REPO}/contents/{GITHUB_PATH}")
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json",
+        "Content-Type": "application/json",
+    }
+
+    # 現在のSHAを取得
+    sha = None
+    try:
+        req = urllib.request.Request(api_url, headers=headers)
+        with urllib.request.urlopen(req) as resp:
+            sha = json.loads(resp.read())["sha"]
+    except urllib.error.HTTPError:
+        pass
+
+    # ファイルを更新
+    body: dict = {
+        "message": "希望休データを更新",
+        "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+    }
+    if sha:
+        body["sha"] = sha
+
+    try:
+        req = urllib.request.Request(
+            api_url,
+            data=json.dumps(body).encode("utf-8"),
+            headers=headers,
+            method="PUT",
+        )
+        urllib.request.urlopen(req)
+    except urllib.error.HTTPError as e:
+        st.warning(f"GitHubへの保存に失敗しました（{e.code}）。ローカルには保存済みです。")
+
+
 def save_requests(year: int, month: int, requests: dict[str, list[int]]):
-    """指定年月の希望休をrequests.csvに書き込む（他の月のデータは保持）"""
+    """指定年月の希望休をrequests.csvに書き込み、GitHubにも反映する"""
     path = DATA_DIR / "requests.csv"
 
     # 既存データ読み込み（他の月分を保持）
@@ -108,17 +170,16 @@ def save_requests(year: int, month: int, requests: dict[str, list[int]]):
                 "備考": "",
             })
 
-    # 書き込み
     all_rows = existing_rows + new_rows
+    csv_str = _build_csv_str(comment_lines, all_rows)
+
+    # ローカルに書き込み
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["名前", "日付", "希望種別", "シフト", "備考"], extrasaction='ignore')
-        writer.writeheader()
-        # コメント行を先頭に
-        for comment in comment_lines:
-            writer.writerow(comment)
-        for row in all_rows:
-            writer.writerow(row)
+        f.write(csv_str)
+
+    # GitHubにも反映（クラウド実行時）
+    _push_to_github(csv_str)
 
 
 # ── タブ ──────────────────────────────────────────────────────────────
