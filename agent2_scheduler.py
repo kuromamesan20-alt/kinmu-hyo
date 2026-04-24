@@ -38,7 +38,7 @@ def build_schedule(year: int, month: int, input_data: dict) -> dict:
     _phase1_fixed(staff_list, dates, schedule, req_map)
 
     # 皿洗い4名を毎日1名ずつローテーション
-    _assign_sara_rotation(staff_list, dates, schedule)
+    _assign_sara_rotation(staff_list, dates, schedule, req_map)
 
     # 稲葉耕太：週5日・全て「相」・休みはどの曜日でも可
     _assign_inaba_rotation(dates, schedule, req_map, year, month)
@@ -156,16 +156,17 @@ def _balance_weekly_rest(staff_list, dates, schedule, req_map):
 
 # ── Phase 1: 固定割り当て ─────────────────────────────────────────────
 
-def _assign_sara_rotation(staff_list, dates, schedule):
+def _assign_sara_rotation(staff_list, dates, schedule, req_map):
     """
     皿洗い4名（今井順子・永井仁美・石橋睦子・岡本ますみ）を
     毎日必ず1名だけローテーションで割り当てる。
     各人の週勤務日数を参考に月間出勤可能日数の上限を設ける。
+    希望休の日はその人を候補から除外する。
     """
     sara_names = ["今井順子", "永井仁美", "石橋睦子", "岡本ますみ"]
     sara_staff = {s.name: s for s in staff_list if s.name in sara_names}
+    sara_names = [n for n in sara_names if n in sara_staff]  # staff.csvに存在する人のみ
 
-    # 各人の月間目標日数（週勤務日数×月週数）
     import calendar as _cal
     if not dates:
         return
@@ -181,18 +182,26 @@ def _assign_sara_rotation(staff_list, dates, schedule):
             schedule[name][d] = "休"
 
     # 毎日1名だけ割り当て（ローテーション）
-    idx = 0  # ローテーション位置
+    idx = 0
     for d in dates:
-        # 本日出勤できる候補（quota未達）
+        # 希望休の人は除外
+        kibou_rest_names = {
+            name for name in sara_names
+            if req_map.get(name, {}).get(d) and req_map[name][d].req_type == "希望休"
+        }
+
+        # quota未達かつ希望休でない候補
         cands = [
             name for name in sara_names
-            if work_counts[name] < quotas[name]
+            if work_counts[name] < quotas[name] and name not in kibou_rest_names
         ]
         if not cands:
-            # 全員quota達成済み → 最も少ない人に割り当て
-            cands = sara_names
+            # quota達成済みの中から希望休でない人を選ぶ
+            cands = [name for name in sara_names if name not in kibou_rest_names]
+        if not cands:
+            # 全員希望休（稀なケース）→ スキップ
+            continue
 
-        # 前回から続くローテーション順で選ぶ
         ordered = sara_names[idx:] + sara_names[:idx]
         chosen = next((n for n in ordered if n in cands), cands[0])
 
