@@ -60,8 +60,12 @@ def build_schedule(year: int, month: int, input_data: dict) -> dict:
         _assign_early_shift(d, dates, schedule, req_map, staff_list)
 
         # 2c: 日勤（日/A/P）確保
+        # 稲葉耕太が休みの日はノルマ+1（早出込み8人体制）
+        inaba_off = schedule.get("稲葉耕太", {}).get(d, "") == "休"
+        day_am_norm = 7 if inaba_off else AM_NORM
+        day_pm_norm = 7 if inaba_off else PM_NORM
         _assign_daytime_shift(d, day_idx, days_remaining, dates, schedule,
-                              req_map, countable, targets)
+                              req_map, countable, targets, day_am_norm, day_pm_norm)
 
         # 残り未割当を休に確定
         for s in staff_list:
@@ -111,9 +115,15 @@ def _balance_weekly_rest(staff_list, dates, schedule, req_map):
                 req = req_map.get(s.name, {}).get(d)
                 return req and req.req_type == "希望休"
 
+            def inaba_off_day(d):
+                return schedule.get("稲葉耕太", {}).get(d, "") == "休"
+
             if rest_count > 2:
                 # 休みが多い → 余分な休みを勤務に変換（AM_NORMより週2休み厳守を優先）
                 excess = rest_count - 2
+                # 安部稚畝：稲葉耕太の出勤日の休みを先に変換（稲葉耕太の休日は休みをキープ）
+                if s.name == "安部稚畝":
+                    rest_days = sorted(rest_days, key=lambda d: (0 if not inaba_off_day(d) else 1))
                 changed = 0
                 for d in rest_days:
                     if changed >= excess:
@@ -146,6 +156,9 @@ def _balance_weekly_rest(staff_list, dates, schedule, req_map):
                     and not (req_map.get(s.name, {}).get(d)
                              and req_map[s.name][d].req_type == "希望シフト")
                 ]
+                # 安部稚畝：稲葉耕太の出勤日を先に休みに変換（稲葉耕太の休日は出勤をキープ）
+                if s.name == "安部稚畝":
+                    changeable = sorted(changeable, key=lambda d: (0 if not inaba_off_day(d) else 1))
                 converted = changeable[:deficit]
                 for d in converted:
                     schedule[s.name][d] = "休"
@@ -424,7 +437,8 @@ def _assign_early_shift(d, dates, schedule, req_map, staff_list):
 # ── 2c: 日勤 ─────────────────────────────────────────────────────────
 
 def _assign_daytime_shift(d, day_idx, days_remaining, dates, schedule,
-                           req_map, countable, targets):
+                           req_map, countable, targets,
+                           am_norm=AM_NORM, pm_norm=PM_NORM):
     am_count = sum(1 for s in countable
                    if schedule[s.name].get(d, "") in ("日", "A"))
     pm_count = sum(1 for s in countable
@@ -444,7 +458,7 @@ def _assign_daytime_shift(d, day_idx, days_remaining, dates, schedule,
     avail.sort(key=score)
 
     for s in avail:
-        if am_count >= AM_NORM and pm_count >= PM_NORM:
+        if am_count >= am_norm and pm_count >= pm_norm:
             break
 
         work_so_far = sum(1 for dd in dates
@@ -453,8 +467,8 @@ def _assign_daytime_shift(d, day_idx, days_remaining, dates, schedule,
             schedule[s.name][d] = "休"
             continue
 
-        need_am = am_count < AM_NORM
-        need_pm = pm_count < PM_NORM
+        need_am = am_count < am_norm
+        need_pm = pm_count < pm_norm
 
         # A/P週1回制限チェック（AP_STAFFの全員）
         ap_weekly_full = (
@@ -479,7 +493,7 @@ def _assign_daytime_shift(d, day_idx, days_remaining, dates, schedule,
                 continue
             shift = "P"
         else:
-            shift = _pick_shift(s, am_count, pm_count)
+            shift = _pick_shift(s, am_count, pm_count, am_norm, pm_norm)
             # 週AP制限で A/P → 日 に変換
             if shift in ("A", "P") and ap_weekly_full and s.name not in A_ONLY_STAFF:
                 shift = "日"
@@ -491,29 +505,29 @@ def _assign_daytime_shift(d, day_idx, days_remaining, dates, schedule,
             pm_count += 1
 
 
-def _pick_shift(s, am, pm):
+def _pick_shift(s, am, pm, am_norm=AM_NORM, pm_norm=PM_NORM):
     name = s.name
     if s.a_only: return "A"
     if name == "東山鼓":
-        if am < AM_NORM and pm < PM_NORM: return "日"
-        if pm < PM_NORM: return "P"
+        if am < am_norm and pm < pm_norm: return "日"
+        if pm < pm_norm: return "P"
         return "夕"
     if name == "塩内由可":
-        if am < AM_NORM and pm < PM_NORM: return "日"
-        if pm < PM_NORM: return "P"
+        if am < am_norm and pm < pm_norm: return "日"
+        if pm < pm_norm: return "P"
         return "日"
     if name == "福山圭子":
-        if am < AM_NORM and pm < PM_NORM: return "日"
+        if am < am_norm and pm < pm_norm: return "日"
         return "夕"
     if name in AP_STAFF and name not in {"東山鼓","塩内由可"}:
-        if am < AM_NORM and pm < PM_NORM: return "日"
-        if pm < PM_NORM: return "P"
+        if am < am_norm and pm < pm_norm: return "日"
+        if pm < pm_norm: return "P"
         return "A"
-    if am < AM_NORM and pm < PM_NORM: return "日"
-    if am < AM_NORM:
+    if am < am_norm and pm < pm_norm: return "日"
+    if am < am_norm:
         can_a = s.ap_allowed and name not in AP_FORBIDDEN and name not in A_ONLY_STAFF
         return "A" if can_a else "日"
-    if pm < PM_NORM:
+    if pm < pm_norm:
         can_p = s.ap_allowed and name not in AP_FORBIDDEN and name not in A_ONLY_STAFF
         return "P" if can_p else "日"
     return "日"

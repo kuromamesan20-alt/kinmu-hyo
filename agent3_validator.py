@@ -70,18 +70,35 @@ def validate(schedule_data: dict) -> ValidationResult:
         elif deep_count > 1:
             result.warn(f"{date_str}：深夜勤{deep_count}名（多い）")
 
+        # ── 動的ノルム計算 ───────────────────────────────────────────
+        inaba_shift = schedule["稲葉耕太"].get(d, "") if "稲葉耕太" in schedule else ""
+        anbe_shift  = schedule["安部稚畝"].get(d, "")  if "安部稚畝"  in schedule else ""
+        inaba_off   = inaba_shift == "休"
+        anbe_active = anbe_shift in ("早", "日")
+        if inaba_off:
+            day_am_norm, day_pm_norm = 7, 7
+            norm_required = True
+        elif anbe_active:
+            day_am_norm, day_pm_norm = 7, 7
+            norm_required = False   # 努力目標
+        else:
+            day_am_norm, day_pm_norm = AM_NORM, PM_NORM
+            norm_required = True
+
         # ── 午前カウント ──────────────────────────────────────────────
         am_members = [
             s for s in staff_list
             if not s.count_excluded and schedule[s.name].get(d) in ("日", "A")
         ]
         am_count = len(am_members)
-        if am_count < AM_NORM:
-            result.warn(f"{date_str}：午前人数不足（{am_count}名）")
-            for s in am_members:
-                result.red_cells.add((s.name, d))
-        elif am_count > AM_NORM:
-            result.warn(f"{date_str}：午前人数過剰（{am_count}名）")
+        if am_count < day_am_norm:
+            label = "" if norm_required else "（努力目標）"
+            result.warn(f"{date_str}：午前人数不足（{am_count}名／目標{day_am_norm}名）{label}")
+            if norm_required:
+                for s in am_members:
+                    result.red_cells.add((s.name, d))
+        elif am_count > day_am_norm:
+            result.warn(f"{date_str}：午前人数過剰（{am_count}名／目標{day_am_norm}名）")
 
         # ── 午後カウント ──────────────────────────────────────────────
         pm_members = [
@@ -89,12 +106,14 @@ def validate(schedule_data: dict) -> ValidationResult:
             if not s.count_excluded and schedule[s.name].get(d) in ("日", "P")
         ]
         pm_count = len(pm_members)
-        if pm_count < PM_NORM:
-            result.warn(f"{date_str}：午後人数不足（{pm_count}名）")
-            for s in pm_members:
-                result.red_cells.add((s.name, d))
-        elif pm_count > PM_NORM:
-            result.warn(f"{date_str}：午後人数過剰（{pm_count}名）")
+        if pm_count < day_pm_norm:
+            label = "" if norm_required else "（努力目標）"
+            result.warn(f"{date_str}：午後人数不足（{pm_count}名／目標{day_pm_norm}名）{label}")
+            if norm_required:
+                for s in pm_members:
+                    result.red_cells.add((s.name, d))
+        elif pm_count > day_pm_norm:
+            result.warn(f"{date_str}：午後人数過剰（{pm_count}名／目標{day_pm_norm}名）")
 
         # ── 認知症加算チェック＆黄色セル ──────────────────────────────
         ninchi_workers = [
@@ -159,9 +178,7 @@ def _check_personal_rules(s, dates: list, schedule: dict, result: ValidationResu
             result.warn(f"{name}：{month}月{d.day}日 夕禁止なのに夕が入っている")
 
     # 週次 A・P 回数チェック（週2回以上禁止）
-    if name in {s.name for s in [s] if s.name in (
-        {"谷口直子", "東山鼓", "石橋泉子", "曽我久美子", "塩内由可"}
-    )}:
+    if name in {"谷口直子", "東山鼓", "石橋泉子", "曽我久美子", "塩内由可"}:
         weeks = _split_weeks(dates)
         for week in weeks:
             ap_count = sum(
