@@ -300,6 +300,37 @@ def _phase1_fixed(staff_list, dates, schedule, req_map):
                 if wd not in (0,1,2,3,4):
                     schedule[s.name][d] = "休"; continue
 
+    # 坂本雅代：21〜24日の間の1日に「事務」（希望休でない最初の空き日）
+    if "坂本雅代" in schedule:
+        year, month = dates[0].year, dates[0].month
+        for day_num in range(21, 25):
+            d_cand = datetime.date(year, month, day_num)
+            if d_cand not in dates:
+                continue
+            req = req_map.get("坂本雅代", {}).get(d_cand)
+            if req and req.req_type == "希望休":
+                continue
+            if schedule["坂本雅代"].get(d_cand, "") == "":
+                schedule["坂本雅代"][d_cand] = "事務"
+                break
+
+    # 岡谷佳代子・大久保夏南：奇数月→岡谷、偶数月→大久保に月1回「計」
+    year, month = dates[0].year, dates[0].month
+    kei_name = "岡谷佳代子" if month % 2 == 1 else "大久保夏南"
+    if kei_name in schedule:
+        for day_num in [15, 14, 16, 13, 17, 12, 18, 11, 19, 10, 20, 9, 21, 8, 22]:
+            if day_num > dates[-1].day:
+                continue
+            d_cand = datetime.date(year, month, day_num)
+            if d_cand not in dates:
+                continue
+            req = req_map.get(kei_name, {}).get(d_cand)
+            if req and req.req_type == "希望休":
+                continue
+            if schedule[kei_name].get(d_cand, "") == "":
+                schedule[kei_name][d_cand] = "計"
+                break
+
 
 # ── ユーティリティ ────────────────────────────────────────────────────
 
