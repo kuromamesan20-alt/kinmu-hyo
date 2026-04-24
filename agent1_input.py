@@ -24,7 +24,10 @@ AP_STAFF = {"谷口直子", "東山鼓", "石橋泉子", "曽我久美子", "塩
 AP_ALLOWED = A_ONLY_STAFF | AP_STAFF
 
 # 夕シフト可能スタッフ
-YUKI_STAFF = {"福山圭子", "塩内由可", "東山鼓"}
+YUKI_STAFF = {"塩内由可", "東山鼓"}
+
+# 週4日勤固定スタッフ（週に日勤ちょうど4日・夕不可）
+WEEKLY_4WORK_STAFF = {"福山圭子"}
 
 # 送迎担当
 DELIVERY_STAFF = {"堀太"}
@@ -82,6 +85,7 @@ class StaffInfo:
     count_excluded: bool = False  # 人数カウント除外
     jun_only: bool = False  # 準夜のみOK（深夜不可）
     weekly_2rest: bool = False  # 週2休み厳守
+    weekly_4work: bool = False  # 週4日勤固定
 
 
 def load_staff() -> list[StaffInfo]:
@@ -120,6 +124,7 @@ def load_staff() -> list[StaffInfo]:
             if s.jun_only:
                 s.night_ok = True  # 準夜のみだが夜勤枠には入れる
             s.weekly_2rest = name in WEEKLY_2REST_STAFF
+            s.weekly_4work = name in WEEKLY_4WORK_STAFF
             # 管理者・送迎・皿洗い・事務はカウント除外
             s.count_excluded = s.role in {"管理者", "送迎", "皿洗い", "事務"} or name == "稲葉耕太"
 
@@ -193,6 +198,7 @@ def build_input(year: int, month: int) -> dict:
             "AP_FORBIDDEN": AP_FORBIDDEN,
             "PRIORITY_STAFF": PRIORITY_STAFF,
             "SHIFT_HOURS": SHIFT_HOURS,
+            "WEEKLY_4WORK_STAFF": WEEKLY_4WORK_STAFF,
         }
     }
 

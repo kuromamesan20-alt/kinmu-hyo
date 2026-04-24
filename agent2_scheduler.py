@@ -9,7 +9,7 @@ from agent1_input import (
     StaffInfo, build_input,
     A_ONLY_STAFF, AP_STAFF, AP_ALLOWED, AP_FORBIDDEN,
     YUKI_STAFF, SARA_STAFF, NINCHI_STAFF, NURSE_STAFF, PRIORITY_STAFF,
-    SHIFT_HOURS, WEEKLY_2REST_STAFF
+    SHIFT_HOURS, WEEKLY_2REST_STAFF, WEEKLY_4WORK_STAFF
 )
 
 AM_NORM = 6
@@ -74,6 +74,9 @@ def build_schedule(year: int, month: int, input_data: dict) -> dict:
 
     # Phase3: 週2休み厳守スタッフの調整
     _balance_weekly_rest(staff_list, dates, schedule, req_map)
+
+    # Phase3.5: 週4日勤固定スタッフの調整
+    _balance_weekly_4work(staff_list, dates, schedule, req_map)
 
     # Phase4: 中重度加算の看護師配置バランス後処理
     _balance_nurse_coverage(staff_list, dates, schedule, req_map)
@@ -206,6 +209,95 @@ def _balance_weekly_rest(staff_list, dates, schedule, req_map):
                     ]
                     for d in changeable2[:deficit]:
                         schedule[s.name][d] = "休"
+
+
+# ── Phase 3.5: 週4日勤固定スタッフの調整 ───────────────────────────────
+
+def _balance_weekly_4work(staff_list, dates, schedule, req_map):
+    """週4日勤固定スタッフ（福山圭子等）の勤務を週単位でちょうど4日に調整。
+    夕シフトは既に除外されているため、勤務=日のみ。
+    """
+    four_work_staff = [s for s in staff_list if s.weekly_4work]
+    if not four_work_staff:
+        return
+
+    weeks = _get_sunday_weeks(dates)
+
+    for s in four_work_staff:
+        for week in weeks:
+            if len(week) < 7:
+                continue
+
+            def is_kibou_rest(d):
+                req = req_map.get(s.name, {}).get(d)
+                return req and req.req_type == "希望休"
+
+            work_days = [d for d in week if schedule[s.name][d] in WORK_SHIFTS]
+            rest_days = [d for d in week if schedule[s.name][d] == "休"]
+            work_count = len(work_days)
+
+            if work_count == 4:
+                continue
+
+            if work_count > 4:
+                # 勤務過多 → 余分な日を休みに変換
+                excess = work_count - 4
+                changeable = [
+                    d for d in work_days
+                    if schedule[s.name][d] == "日"
+                    and not is_kibou_rest(d)
+                    and not (req_map.get(s.name, {}).get(d)
+                             and req_map[s.name][d].req_type == "希望シフト")
+                ]
+                for d in changeable[:excess]:
+                    schedule[s.name][d] = "休"
+
+            else:
+                # 勤務不足 → 休みを日勤に変換
+                deficit = 4 - work_count
+                changeable = [
+                    d for d in rest_days
+                    if not is_kibou_rest(d)
+                ]
+                changed = 0
+                for d in changeable:
+                    if changed >= deficit:
+                        break
+                    # AMノルムを超える日への追加は行わない
+                    idx = dates.index(d)
+                    prev = schedule[s.name].get(dates[idx - 1], "") if idx > 0 else ""
+                    if prev in ("深", "準"):
+                        continue
+                    inaba_off = schedule.get("稲葉耕太", {}).get(d, "") == "休"
+                    anbe_active = schedule.get("安部稚畝", {}).get(d, "") in ("早", "日")
+                    day_norm = 7 if (inaba_off or anbe_active) else AM_NORM
+                    countable_names = {
+                        st.name for st in staff_list
+                        if not st.count_excluded and not st.sara_only and not st.delivery_only
+                    }
+                    am_now = sum(
+                        1 for st in staff_list
+                        if st.name in countable_names and schedule[st.name].get(d) in ("日", "A")
+                    )
+                    if am_now >= day_norm:
+                        continue
+                    # 連続5日以上になるか確認
+                    before_chain = 0
+                    for k in range(idx - 1, -1, -1):
+                        if schedule[s.name].get(dates[k], "") in WORK_SHIFTS:
+                            before_chain += 1
+                        else:
+                            break
+                    after_chain = 0
+                    for k in range(idx + 1, len(dates)):
+                        if schedule[s.name].get(dates[k], "") in WORK_SHIFTS:
+                            after_chain += 1
+                        else:
+                            break
+                    if before_chain + 1 + after_chain >= 5:
+                        continue
+                    schedule[s.name][d] = "日"
+                    changed += 1
 
 
 # ── Phase 4: 中重度加算バランス後処理 ───────────────────────────────────
