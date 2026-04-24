@@ -342,6 +342,28 @@ def _next_day_occupied(name, d, dates, schedule):
     return schedule[name].get(dates[idx+1], "") not in ("", "休")
 
 
+def _night_would_overflow(s, d, dates, schedule):
+    """深/準を入れると翌日が強制休みになり、週2休みを超えるか判定"""
+    if not s.weekly_2rest:
+        return False
+    idx = dates.index(d)
+    if idx + 1 >= len(dates):
+        return False
+    next_d = dates[idx + 1]
+
+    def week_start_of(dt):
+        days_since_sun = (dt.weekday() + 1) % 7
+        return dt - datetime.timedelta(days=days_since_sun)
+
+    # 翌日が属する週の休み数を確認
+    next_week_start = week_start_of(next_d)
+    next_week_end = next_week_start + datetime.timedelta(days=7)
+    next_week_days = [dd for dd in dates if next_week_start <= dd < next_week_end]
+    next_rest = sum(1 for dd in next_week_days if schedule[s.name].get(dd) == "休")
+    # 翌日の強制休みを加えた合計が2を超えるなら割り当てない
+    return next_rest + 1 > 2
+
+
 # ── 2a: 夜勤 ─────────────────────────────────────────────────────────
 
 def _assign_night_shift(stype, d, dates, schedule, req_map, staff_list):
@@ -353,28 +375,30 @@ def _assign_night_shift(stype, d, dates, schedule, req_map, staff_list):
                 and not (s.jun_only and stype == "深")]
     if stype == "深":
         # 深は準の翌日もOK（深の翌日はNG）
+        # ただし翌日が希望休の人には深を入れない（希望休が強制休みと重なるのを防ぐ）
+        def _next_day_is_kibou_rest(s, d):
+            idx = dates.index(d)
+            if idx + 1 >= len(dates):
+                return False
+            next_d = dates[idx + 1]
+            req = req_map.get(s.name, {}).get(next_d)
+            return req and req.req_type == "希望休"
+
         cands = [s for s in night_ok
                  if schedule[s.name][d] == ""
                  and not (req_map.get(s.name, {}).get(d) and req_map[s.name][d].req_type == "希望休")
                  and _prev_shift(s.name, d, dates, schedule) != "深"
                  and _consecutive_before(s.name, d, dates, schedule) < 4
-                 and not _next_day_occupied(s.name, d, dates, schedule)]
+                 and not _next_day_occupied(s.name, d, dates, schedule)
+                 and not _next_day_is_kibou_rest(s, d)
+                 and not _night_would_overflow(s, d, dates, schedule)]
     else:
         # 準：WEEKLY_2REST_STAFFは、準を入れると翌日強制休みになるため
-        # その週の確定休み＋希望休＋準翌日休みが2日を超える場合は除外
-        def _jun_would_overflow(s, d):
-            if not s.weekly_2rest:
-                return False
-            days_since_sun = (d.weekday() + 1) % 7
-            week_start = d - datetime.timedelta(days=days_since_sun)
-            week_end = week_start + datetime.timedelta(days=7)
-            week_days = [dd for dd in dates if week_start <= dd < week_end]
-            current_rest = sum(1 for dd in week_days if schedule[s.name].get(dd) == "休")
-            return current_rest + 1 > 2  # 準翌日の強制休み分で超過
+        # その週の確定休み＋準翌日休みが2日を超える場合は除外
         cands = [s for s in night_ok
                  if _can_assign(s.name, d, dates, schedule, req_map)
                  and not _next_day_occupied(s.name, d, dates, schedule)
-                 and not _jun_would_overflow(s, d)]
+                 and not _night_would_overflow(s, d, dates, schedule)]
     cands.sort(key=lambda s: (
         sum(1 for dd in dates if schedule[s.name].get(dd) in ("準","深")),
     ))
