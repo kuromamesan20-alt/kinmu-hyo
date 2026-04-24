@@ -61,7 +61,7 @@ def export_to_excel(schedule_data: dict, validation_result=None) -> Path:
         for i, d in enumerate(dates):
             col = DATE_START_COL + i
             shift = schedule[s.name].get(d, "")
-            ws.cell(row=row, column=col, value=shift)
+            ws.cell(row=row, column=col, value="○" if shift == "皿洗い" else shift)
 
         # 個人集計
         shifts = [schedule[s.name].get(d, "") for d in dates]
