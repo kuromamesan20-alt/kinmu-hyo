@@ -721,10 +721,17 @@ def _night_rest_in_next_week(s, d, dates, schedule):
 def _assign_night_shift(stype, d, dates, schedule, req_map, staff_list):
     if any(schedule[s.name][d] == stype for s in staff_list):
         return
+    # 安部稚畝：2026年5月のみ深夜を最大2回まで許可
+    anbe_shin_ok = (
+        stype == "深"
+        and dates[0].year == 2026 and dates[0].month == 5
+        and sum(1 for dd in dates if schedule["安部稚畝"].get(dd) == "深") < 2
+    )
     night_ok = [s for s in staff_list
                 if s.night_ok and not s.sara_only and not s.delivery_only
                 and s.name != "稲葉耕太"
-                and not (s.jun_only and stype == "深")]
+                and not (s.jun_only and stype == "深"
+                         and not (s.name == "安部稚畝" and anbe_shin_ok))]
     if stype == "深":
         # 深は準の翌日もOK（深の翌日はNG）
         # ただし翌日が希望休の人には深を入れない（希望休が強制休みと重なるのを防ぐ）
