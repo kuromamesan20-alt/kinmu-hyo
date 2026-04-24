@@ -6,7 +6,7 @@ import datetime
 import calendar
 from agent1_input import (
     SHIFT_HOURS, A_ONLY_STAFF, AP_ALLOWED, AP_FORBIDDEN,
-    YUKI_STAFF, NINCHI_STAFF, NURSE_STAFF
+    YUKI_STAFF, NINCHI_STAFF, NURSE_STAFF, AP_NO_LIMIT_STAFF
 )
 
 
@@ -177,8 +177,8 @@ def _check_personal_rules(s, dates: list, schedule: dict, result: ValidationResu
         if name not in YUKI_STAFF and shift == "夕":
             result.warn(f"{name}：{month}月{d.day}日 夕禁止なのに夕が入っている")
 
-    # 週次 A・P 回数チェック（週2回以上禁止）
-    if name in {"谷口直子", "東山鼓", "石橋泉子", "曽我久美子", "塩内由可"}:
+    # 週次 A・P 回数チェック（AP_NO_LIMIT_STAFFは制限なし・石橋泉子のみ対象）
+    if name in {"石橋泉子"}:
         weeks = _split_weeks(dates)
         for week in weeks:
             ap_count = sum(

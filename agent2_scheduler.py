@@ -342,15 +342,23 @@ def _balance_nurse_coverage(staff_list, dates, schedule, req_map):
             ps = schedule[name].get(prev, "") if prev != pretend_rest else "休"
             if ps in ("深", "準"):
                 return False
-        consecutive = 0
+        before = 0
         for i in range(idx - 1, max(idx - 5, -1), -1):
             dd = dates[i]
             sh = schedule[name].get(dd, "") if dd != pretend_rest else "休"
-            if sh in ("早", "日", "A", "P", "準", "深", "夕"):
-                consecutive += 1
+            if sh in WORK_SHIFTS:
+                before += 1
             else:
                 break
-        return consecutive < 4
+        after = 0
+        for i in range(idx + 1, min(idx + 5, len(dates))):
+            dd = dates[i]
+            sh = schedule[name].get(dd, "") if dd != pretend_rest else "休"
+            if sh in WORK_SHIFTS:
+                after += 1
+            else:
+                break
+        return before + 1 + after < 5
 
     def _is_met(d):
         nods = _nurses_on(d)
