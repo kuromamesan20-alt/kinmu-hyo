@@ -112,7 +112,7 @@ def _balance_weekly_rest(staff_list, dates, schedule, req_map):
                 return req and req.req_type == "希望休"
 
             if rest_count > 2:
-                # 休みが多い → 余分な休みを日勤に変換（AM_NORMより週2休み厳守を優先）
+                # 休みが多い → 余分な休みを勤務に変換（AM_NORMより週2休み厳守を優先）
                 excess = rest_count - 2
                 changed = 0
                 for d in rest_days:
@@ -122,7 +122,16 @@ def _balance_weekly_rest(staff_list, dates, schedule, req_map):
                         continue
                     idx = dates.index(d)
                     prev = schedule[s.name].get(dates[idx - 1], "") if idx > 0 else ""
-                    if prev in ("深", "準"):
+                    if prev == "深":
+                        continue  # 深の翌日は必ず休み・変更不可
+                    if prev == "準":
+                        # 準の翌日は深もOK（他に深担当がいない場合のみ）
+                        next_d = dates[idx + 1] if idx + 1 < len(dates) else None
+                        deep_taken = any(schedule[st.name].get(d) == "深" for st in staff_list if st.name != s.name)
+                        next_is_rest = next_d is None or schedule[s.name].get(next_d) == "休"
+                        if not deep_taken and next_is_rest:
+                            schedule[s.name][d] = "深"
+                            changed += 1
                         continue
                     schedule[s.name][d] = "日"
                     changed += 1
