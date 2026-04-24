@@ -125,9 +125,9 @@ def _balance_weekly_rest(staff_list, dates, schedule, req_map):
                     if prev == "深":
                         continue  # 深の翌日は必ず休み・変更不可
                     if prev == "準":
-                        # 準の翌日は深もOK（他に深担当がいない場合のみ）
-                        next_d = dates[idx + 1] if idx + 1 < len(dates) else None
+                        # 準の翌日は深でもOK（他に深担当がいない かつ 翌日が休みの場合のみ）
                         deep_taken = any(schedule[st.name].get(d) == "深" for st in staff_list if st.name != s.name)
+                        next_d = dates[idx + 1] if idx + 1 < len(dates) else None
                         next_is_rest = next_d is None or schedule[s.name].get(next_d) == "休"
                         if not deep_taken and next_is_rest:
                             schedule[s.name][d] = "深"
@@ -351,9 +351,30 @@ def _assign_night_shift(stype, d, dates, schedule, req_map, staff_list):
                 if s.night_ok and not s.sara_only and not s.delivery_only
                 and s.name != "稲葉耕太"
                 and not (s.jun_only and stype == "深")]
-    cands = [s for s in night_ok
-             if _can_assign(s.name, d, dates, schedule, req_map)
-             and not _next_day_occupied(s.name, d, dates, schedule)]
+    if stype == "深":
+        # 深は準の翌日もOK（深の翌日はNG）
+        cands = [s for s in night_ok
+                 if schedule[s.name][d] == ""
+                 and not (req_map.get(s.name, {}).get(d) and req_map[s.name][d].req_type == "希望休")
+                 and _prev_shift(s.name, d, dates, schedule) != "深"
+                 and _consecutive_before(s.name, d, dates, schedule) < 4
+                 and not _next_day_occupied(s.name, d, dates, schedule)]
+    else:
+        # 準：WEEKLY_2REST_STAFFは、準を入れると翌日強制休みになるため
+        # その週の確定休み＋希望休＋準翌日休みが2日を超える場合は除外
+        def _jun_would_overflow(s, d):
+            if not s.weekly_2rest:
+                return False
+            days_since_sun = (d.weekday() + 1) % 7
+            week_start = d - datetime.timedelta(days=days_since_sun)
+            week_end = week_start + datetime.timedelta(days=7)
+            week_days = [dd for dd in dates if week_start <= dd < week_end]
+            current_rest = sum(1 for dd in week_days if schedule[s.name].get(dd) == "休")
+            return current_rest + 1 > 2  # 準翌日の強制休み分で超過
+        cands = [s for s in night_ok
+                 if _can_assign(s.name, d, dates, schedule, req_map)
+                 and not _next_day_occupied(s.name, d, dates, schedule)
+                 and not _jun_would_overflow(s, d)]
     cands.sort(key=lambda s: (
         sum(1 for dd in dates if schedule[s.name].get(dd) in ("準","深")),
     ))
