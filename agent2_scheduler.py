@@ -12,6 +12,16 @@ from agent1_input import (
     SHIFT_HOURS, WEEKLY_2REST_STAFF, WEEKLY_4WORK_STAFF, AP_NO_LIMIT_STAFF
 )
 
+# 寺子屋研修日（月/日 固定）
+TERA_DAYS = {(5, 13), (5, 14)}
+TERA_STAFF = {"稲葉耕太", "出野聡子"}
+
+# 田植えイベント固定（月/日 → (スタッフ名, シフト)）
+TAUE_FIXED = {
+    (5, 15): [("坂本雅代", "深")],
+    (5, 16): [("出野聡子", "準"), ("平野由美", "深")],
+}
+
 AM_NORM = 6
 PM_NORM = 6
 WORK_SHIFTS = {"早", "日", "A", "P", "準", "深", "夕"}
@@ -59,6 +69,10 @@ def build_schedule(year: int, month: int, input_data: dict) -> dict:
 
         # 2b: 早出確保
         _assign_early_shift(d, dates, schedule, req_map, staff_list)
+
+        # 田植えイベント(16日): 非正社員で出勤可能な人を全員日勤 + 15日準夜担当を日勤に
+        if (d.month, d.day) == (5, 16):
+            _assign_taue_allhands(d, dates, schedule, req_map, staff_list, countable)
 
         # 2c: 日勤（日/A/P）確保
         # 稲葉耕太が休みの日はノルマ+1（早出込み8人体制）
@@ -539,6 +553,11 @@ def _assign_inaba_rotation(dates, schedule, req_map, year, month):
     _, last_day = _cal.monthrange(year, month)
     target = round(5.0 * last_day / 7)  # 週5日 × 月週数 = 21〜22日
 
+    # 寺子屋研修日は「寺」で固定
+    for d in dates:
+        if (d.month, d.day) in TERA_DAYS:
+            schedule["稲葉耕太"][d] = "寺"
+
     # 希望休を先に確定
     for d in dates:
         req = req_map.get("稲葉耕太", {}).get(d)
@@ -611,6 +630,16 @@ def _phase1_fixed(staff_list, dates, schedule, req_map):
                 schedule["坂本雅代"][d_cand] = "事務"
                 break
 
+    # 寺子屋研修（出野聡子）・田植えイベント固定
+    for d in dates:
+        if (d.month, d.day) in TERA_DAYS:
+            if schedule.get("出野聡子", {}).get(d, "") == "":
+                schedule["出野聡子"][d] = "寺"
+        if (d.month, d.day) in TAUE_FIXED:
+            for name, shift in TAUE_FIXED[(d.month, d.day)]:
+                if name in schedule and schedule[name].get(d, "") == "":
+                    schedule[name][d] = shift
+
     # 岡谷佳代子・大久保夏南：奇数月→岡谷、偶数月→大久保に月1回「計」
     year, month = dates[0].year, dates[0].month
     kei_name = "岡谷佳代子" if month % 2 == 1 else "大久保夏南"
@@ -627,6 +656,46 @@ def _phase1_fixed(staff_list, dates, schedule, req_map):
             if schedule[kei_name].get(d_cand, "") == "":
                 schedule[kei_name][d_cand] = "計"
                 break
+
+
+# ── 田植えイベント(16日) 全員出勤処理 ───────────────────────────────
+
+def _assign_taue_allhands(d, dates, schedule, req_map, staff_list, countable):
+    """
+    田植えイベント当日(16日)の特別処理:
+    1. 前日(15日)の準夜担当者を日勤に（出野聡子は準夜固定なので除外）
+    2. 非正社員(PRIORITY_STAFF以外)のcountableスタッフで出勤可能な人を全員日勤
+    """
+    idx = dates.index(d)
+    prev_d = dates[idx - 1] if idx > 0 else None
+
+    # 1. 15日準夜担当者を16日日勤に（準→日の例外）
+    if prev_d:
+        for s in staff_list:
+            if schedule[s.name].get(prev_d) == "準" and schedule[s.name].get(d, "") == "":
+                if s.name == "出野聡子":
+                    continue  # 出野聡子は16日準夜が固定なのでスキップ
+                req = req_map.get(s.name, {}).get(d)
+                if req and req.req_type == "希望休":
+                    continue
+                if _consecutive_before(s.name, d, dates, schedule) >= 4:
+                    continue
+                schedule[s.name][d] = "日"
+
+    # 2. 非正社員countableスタッフで出勤可能な人を全員日勤
+    for s in countable:
+        if s.is_priority:
+            continue  # 正社員はスキップ
+        if schedule[s.name].get(d, "") != "":
+            continue  # 既に確定済み
+        req = req_map.get(s.name, {}).get(d)
+        if req and req.req_type == "希望休":
+            continue
+        if _prev_shift(s.name, d, dates, schedule) == "深":
+            continue
+        if _consecutive_before(s.name, d, dates, schedule) >= 4:
+            continue
+        schedule[s.name][d] = "日"
 
 
 # ── ユーティリティ ────────────────────────────────────────────────────
@@ -769,16 +838,27 @@ def _assign_night_shift(stype, d, dates, schedule, req_map, staff_list):
                      and not _next_day_occupied(s.name, d, dates, schedule)
                      and not _next_day_is_kibou_rest(s, d)]
     else:
-        # 準：WEEKLY_2REST_STAFFは、準を入れると翌日強制休みになるため
-        # その週の確定休み＋準翌日休みが2日を超える場合は除外
+        # 準：準の翌日も準はOK（深・日はNG）。WEEKLY_2REST_STAFFは週2休み超えを除外
+        def _can_assign_jun(s, d):
+            if schedule[s.name][d] != "":
+                return False
+            if req_map.get(s.name, {}).get(d) and req_map[s.name][d].req_type == "希望休":
+                return False
+            prev = _prev_shift(s.name, d, dates, schedule)
+            if prev == "深":
+                return False  # 深の翌日はNG
+            if _consecutive_before(s.name, d, dates, schedule) >= 4:
+                return False
+            return True
+
         cands = [s for s in night_ok
-                 if _can_assign(s.name, d, dates, schedule, req_map)
+                 if _can_assign_jun(s, d)
                  and not _next_day_occupied(s.name, d, dates, schedule)
                  and not _night_would_overflow(s, d, dates, schedule)]
         if not cands:
             # フォールバック: overflow以外の条件をパスする候補（最後の手段）
             cands = [s for s in night_ok
-                     if _can_assign(s.name, d, dates, schedule, req_map)
+                     if _can_assign_jun(s, d)
                      and not _next_day_occupied(s.name, d, dates, schedule)]
     # 翌日週の確定休み数が少ない順（Phase3が修正しやすい候補を優先）→ 夜勤回数少ない順
     cands.sort(key=lambda s: (
