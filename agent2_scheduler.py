@@ -613,7 +613,9 @@ def _phase1_fixed(staff_list, dates, schedule, req_map):
                 if d.day == 1 or d.day == dates[-1].day:
                     schedule[s.name][d] = "事務"; continue
             if s.name == "工藤泉":
-                if wd not in (0,1,2,3,4):
+                if d.month == 5:
+                    pass  # 5月は土日も出勤OK
+                elif wd in (4, 5):  # 6月以降: 金・土は固定休み
                     schedule[s.name][d] = "休"; continue
 
     # 坂本雅代：21〜24日の間の1日に「事務」（希望休でない最初の空き日）
