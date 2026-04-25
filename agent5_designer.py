@@ -84,14 +84,14 @@ def apply_design(
     total_rows    = summary_start_row + summary_count - 1
     total_cols    = DATE_START_COL + len(dates) - 1
 
-    # 日曜日の列セット（境界判定用）
-    sunday_dates = {d for d in dates if d.weekday() == 6}
+    # 土曜日の列セット（週区切り: 日〜土なので土曜右辺に太線）
+    saturday_dates = {d for d in dates if d.weekday() == 5}
     # 列番号→日付の逆引き（DATE_START_COL以降）
     col_to_date = {DATE_START_COL + i: d for i, d in enumerate(dates)}
 
     def is_sun_col(col: int) -> bool:
         d = col_to_date.get(col)
-        return d in sunday_dates if d else False
+        return d in saturday_dates if d else False
 
     # ── 列幅・行高 ──────────────────────────────────────────────────
     ws.column_dimensions[get_column_letter(NAME_COL)].width = 12
