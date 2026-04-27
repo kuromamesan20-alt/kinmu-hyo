@@ -811,6 +811,16 @@ def _assign_night_shift(stype, d, dates, schedule, req_map, staff_list):
                 and s.name != "稲葉耕太"
                 and not (s.jun_only and stype == "深"
                          and not (s.name == "安部稚畝" and anbe_shin_ok))]
+    def _deep_this_week(name, d):
+        """この日が属する週（日〜土）の深夜勤回数"""
+        days_since_sunday = (d.weekday() + 1) % 7
+        week_start = d - datetime.timedelta(days=days_since_sunday)
+        week_end = week_start + datetime.timedelta(days=7)
+        return sum(
+            1 for dd in dates
+            if week_start <= dd < week_end and schedule[name].get(dd) == "深"
+        )
+
     if stype == "深":
         # 深は準の翌日もOK（深の翌日はNG）
         # ただし翌日が希望休の人には深を入れない（希望休が強制休みと重なるのを防ぐ）
@@ -829,7 +839,8 @@ def _assign_night_shift(stype, d, dates, schedule, req_map, staff_list):
                  and _consecutive_before(s.name, d, dates, schedule) < 4
                  and not _next_day_occupied(s.name, d, dates, schedule)
                  and not _next_day_is_kibou_rest(s, d)
-                 and not _night_would_overflow(s, d, dates, schedule)]
+                 and not _night_would_overflow(s, d, dates, schedule)
+                 and not (s.weekly_2rest and _deep_this_week(s.name, d) >= 1)]
         if not cands:
             # フォールバック: overflow以外の条件をパスする候補（最後の手段）
             cands = [s for s in night_ok
