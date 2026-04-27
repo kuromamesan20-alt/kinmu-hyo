@@ -27,7 +27,7 @@ AP_ALLOWED = A_ONLY_STAFF | AP_STAFF
 YUKI_STAFF = {"塩内由可", "東山鼓"}
 
 # 週4日勤固定スタッフ（週に日勤ちょうど4日・夕不可）
-WEEKLY_4WORK_STAFF = {"福山圭子"}
+WEEKLY_4WORK_STAFF = {"福山圭子", "塩内由可"}
 
 # A/P週1回制限なしスタッフ（週労働時間内ならA・Pを複数回入れてよい）
 AP_NO_LIMIT_STAFF = {"東山鼓", "塩内由可", "谷口直子", "曽我久美子"}
