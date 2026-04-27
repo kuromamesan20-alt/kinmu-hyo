@@ -229,8 +229,8 @@ def _balance_weekly_rest(staff_list, dates, schedule, req_map):
 # ── Phase 3.5: 週4日勤固定スタッフの調整 ───────────────────────────────
 
 def _balance_weekly_4work(staff_list, dates, schedule, req_map):
-    """週4日勤固定スタッフ（福山圭子等）の勤務を週単位でちょうど4日に調整。
-    夕シフトは既に除外されているため、勤務=日のみ。
+    """週4日勤固定スタッフ（福山圭子等）の日勤を週ちょうど4日に調整。
+    夕シフトは追加1日として許容するため、日カウントには含めない。
     """
     four_work_staff = [s for s in staff_list if s.weekly_4work]
     if not four_work_staff:
@@ -243,24 +243,24 @@ def _balance_weekly_4work(staff_list, dates, schedule, req_map):
             if len(week) < 7:
                 continue
 
-            def is_kibou_rest(d):
-                req = req_map.get(s.name, {}).get(d)
+            def is_kibou_rest(d, _name=s.name):
+                req = req_map.get(_name, {}).get(d)
                 return req and req.req_type == "希望休"
 
-            work_days = [d for d in week if schedule[s.name][d] in WORK_SHIFTS]
+            # 日シフトのみカウント（夕はボーナス扱い）
+            nichi_days = [d for d in week if schedule[s.name][d] == "日"]
             rest_days = [d for d in week if schedule[s.name][d] == "休"]
-            work_count = len(work_days)
+            nichi_count = len(nichi_days)
 
-            if work_count == 4:
+            if nichi_count == 4:
                 continue
 
-            if work_count > 4:
-                # 勤務過多 → 余分な日を休みに変換
-                excess = work_count - 4
+            if nichi_count > 4:
+                # 日勤過多 → 余分な日を休みに変換
+                excess = nichi_count - 4
                 changeable = [
-                    d for d in work_days
-                    if schedule[s.name][d] == "日"
-                    and not is_kibou_rest(d)
+                    d for d in nichi_days
+                    if not is_kibou_rest(d)
                     and not (req_map.get(s.name, {}).get(d)
                              and req_map[s.name][d].req_type == "希望シフト")
                 ]
@@ -268,8 +268,8 @@ def _balance_weekly_4work(staff_list, dates, schedule, req_map):
                     schedule[s.name][d] = "休"
 
             else:
-                # 勤務不足 → 休みを日勤に変換
-                deficit = 4 - work_count
+                # 日勤不足 → 休みを日勤に変換
+                deficit = 4 - nichi_count
                 changeable = [
                     d for d in rest_days
                     if not is_kibou_rest(d)
