@@ -19,6 +19,7 @@ AM_NORM = 6
 PM_NORM = 6
 # 集計行のj番目（0=separator,1=早,2=am,3=pm,...）→ 基準人数
 _SUMMARY_NORMS = {2: AM_NORM, 3: PM_NORM}
+EXTRA_STAFF_WEEKDAYS = {0, 3, 5}
 
 COLOR_SUMMARY_BG  = "F2F2F2"   # 集計行背景
 
@@ -172,6 +173,12 @@ def apply_design(
                 cell.fill = _no_fill()
 
     # ── 集計行 ────────────────────────────────────────────────────────
+    def summary_required_norm(d: datetime.date) -> int:
+        inaba_off = schedule.get("稲葉耕太", {}).get(d, "") == "休"
+        if inaba_off:
+            return 7
+        return AM_NORM
+
     for j in range(summary_count + 1):
         row = summary_start_row - 1 + j
         ws.row_dimensions[row].height = 15
@@ -186,7 +193,8 @@ def apply_design(
             cell.alignment = _center()
             cell.border    = _border(is_sun_col(col))
             val = cell.value
-            if j in _SUMMARY_NORMS and isinstance(val, int) and val < _SUMMARY_NORMS[j]:
+            target = summary_required_norm(dates[i]) if j in _SUMMARY_NORMS else _SUMMARY_NORMS.get(j)
+            if j in _SUMMARY_NORMS and isinstance(val, int) and val < target:
                 cell.font = _font(color="FF0000", bold=True, size=9)
             else:
                 cell.font = _font(size=9)

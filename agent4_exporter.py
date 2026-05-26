@@ -121,7 +121,7 @@ def _count_summary(key: str, d: datetime.date, staff_list: list, schedule: dict)
         return sum(1 for s in staff_list if schedule[s.name].get(d) == "深")
     if key == "夕送迎":
         return sum(
-            1 for s in staff_list if schedule[s.name].get(d) in ("夕", "送迎")
+            1 for s in staff_list if schedule[s.name].get(d) in ("夕", "送迎", "朝夕")
         )
     return 0
 

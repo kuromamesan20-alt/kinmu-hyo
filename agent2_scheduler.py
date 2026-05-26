@@ -19,12 +19,23 @@ TERA_STAFF = {"稲葉耕太", "出野聡子"}
 # 田植えイベント固定（月/日 → (スタッフ名, シフト)）
 TAUE_FIXED = {
     (5, 15): [("坂本雅代", "深")],
-    (5, 16): [("出野聡子", "準"), ("平野由美", "深")],
 }
 
 AM_NORM = 6
 PM_NORM = 6
-WORK_SHIFTS = {"早", "日", "A", "P", "準", "深", "夕"}
+WORK_SHIFTS = {"早", "日", "A", "P", "準", "深", "夕", "計", "寺"}
+EXTRA_STAFF_WEEKDAYS = {0, 3, 5}  # 月・木・土は早出込み8人体制を目指す
+
+
+def _day_norm(d, schedule, include_anbe_effort=False):
+    """日別の午前/午後ノルム（日+A、日+P）を返す。"""
+    inaba_off = schedule.get("稲葉耕太", {}).get(d, "") == "休"
+    anbe_active = schedule.get("安部稚畝", {}).get(d, "") in ("早", "日")
+    if inaba_off or d.weekday() in EXTRA_STAFF_WEEKDAYS:
+        return 7
+    if include_anbe_effort and anbe_active:
+        return 7
+    return AM_NORM
 
 
 def get_month_dates(year: int, month: int) -> list:
@@ -75,10 +86,9 @@ def build_schedule(year: int, month: int, input_data: dict) -> dict:
             _assign_taue_allhands(d, dates, schedule, req_map, staff_list, countable)
 
         # 2c: 日勤（日/A/P）確保
-        # 稲葉耕太が休みの日はノルマ+1（早出込み8人体制）
-        inaba_off = schedule.get("稲葉耕太", {}).get(d, "") == "休"
-        day_am_norm = 7 if inaba_off else AM_NORM
-        day_pm_norm = 7 if inaba_off else PM_NORM
+        # 稲葉耕太休み、または月木土はノルマ+1（早出込み8人体制）
+        day_am_norm = _day_norm(d, schedule)
+        day_pm_norm = day_am_norm
         _assign_daytime_shift(d, day_idx, days_remaining, dates, schedule,
                               req_map, countable, targets, day_am_norm, day_pm_norm)
 
@@ -95,6 +105,9 @@ def build_schedule(year: int, month: int, input_data: dict) -> dict:
 
     # Phase4: 中重度加算の看護師配置バランス後処理
     _balance_nurse_coverage(staff_list, dates, schedule, req_map)
+
+    # Phase5: 稲葉耕太休み日のAM/PM不足を最終補完
+    _fill_required_coverage(staff_list, dates, schedule, req_map, targets)
 
     return schedule
 
@@ -165,9 +178,7 @@ def _balance_weekly_rest(staff_list, dates, schedule, req_map):
                             changed += 1
                         continue
                     # AMノルムを超える日への日勤追加は行わない
-                    inaba_off = schedule.get("稲葉耕太", {}).get(d, "") == "休"
-                    anbe_active = schedule.get("安部稚畝", {}).get(d, "") in ("早", "日")
-                    day_norm = 7 if (inaba_off or anbe_active) else AM_NORM
+                    day_norm = _day_norm(d, schedule, include_anbe_effort=True)
                     countable_names = {
                         st.name for st in staff_list
                         if not st.count_excluded and not st.sara_only and not st.delivery_only
@@ -255,6 +266,22 @@ def _balance_weekly_4work(staff_list, dates, schedule, req_map):
             if nichi_count == 4:
                 continue
 
+            if nichi_count < 4:
+                # A/Pは日勤固定スタッフの週4「日」には数えないため、まず日へ寄せる
+                convertible = [
+                    d for d in week
+                    if schedule[s.name][d] in ("A", "P")
+                    and not (req_map.get(s.name, {}).get(d)
+                             and req_map[s.name][d].req_type == "希望シフト")
+                ]
+                for d in convertible[:4 - nichi_count]:
+                    schedule[s.name][d] = "日"
+                nichi_days = [d for d in week if schedule[s.name][d] == "日"]
+                rest_days = [d for d in week if schedule[s.name][d] == "休"]
+                nichi_count = len(nichi_days)
+                if nichi_count == 4:
+                    continue
+
             if nichi_count > 4:
                 # 日勤過多 → 余分な日を休みに変換
                 excess = nichi_count - 4
@@ -278,22 +305,10 @@ def _balance_weekly_4work(staff_list, dates, schedule, req_map):
                 for d in changeable:
                     if changed >= deficit:
                         break
-                    # AMノルムを超える日への追加は行わない
+                    # 週4日勤固定を優先し、連続勤務だけ確認する
                     idx = dates.index(d)
                     prev = schedule[s.name].get(dates[idx - 1], "") if idx > 0 else ""
                     if prev in ("深", "準"):
-                        continue
-                    inaba_off = schedule.get("稲葉耕太", {}).get(d, "") == "休"
-                    day_norm = 7 if inaba_off else AM_NORM
-                    countable_names = {
-                        st.name for st in staff_list
-                        if not st.count_excluded and not st.sara_only and not st.delivery_only
-                    }
-                    am_now = sum(
-                        1 for st in staff_list
-                        if st.name in countable_names and schedule[st.name].get(d) in ("日", "A")
-                    )
-                    if am_now >= day_norm:
                         continue
                     # 連続5日以上になるか確認
                     before_chain = 0
@@ -312,6 +327,137 @@ def _balance_weekly_4work(staff_list, dates, schedule, req_map):
                         continue
                     schedule[s.name][d] = "日"
                     changed += 1
+
+
+def _week_of(d, dates):
+    days_since_sunday = (d.weekday() + 1) % 7
+    week_start = d - datetime.timedelta(days=days_since_sunday)
+    return [dd for dd in dates if week_start <= dd < week_start + datetime.timedelta(days=7)]
+
+
+def _nichi_count_in_week(name, week, schedule):
+    return sum(1 for dd in week if schedule[name].get(dd) == "日")
+
+
+def _respects_weekly_4work_after(s, dates, schedule, changes):
+    if not s.weekly_4work:
+        return True
+    affected = {_week_of(d, dates)[0] for d, _ in changes}
+    for week_start in affected:
+        week = [dd for dd in dates if week_start <= dd < week_start + datetime.timedelta(days=7)]
+        if len(week) < 7:
+            continue
+        count = 0
+        for dd in week:
+            shift = next((new_shift for chg_d, new_shift in changes if chg_d == dd), schedule[s.name].get(dd))
+            if shift == "日":
+                count += 1
+        if count != 4:
+            return False
+    return True
+
+
+def _respects_weekly_2rest_after(s, dates, schedule, changes):
+    if not s.weekly_2rest:
+        return True
+    affected = {_week_of(d, dates)[0] for d, _ in changes}
+    for week_start in affected:
+        week = [dd for dd in dates if week_start <= dd < week_start + datetime.timedelta(days=7)]
+        if len(week) < 7:
+            continue
+        rest_count = 0
+        for dd in week:
+            shift = next((new_shift for chg_d, new_shift in changes if chg_d == dd), schedule[s.name].get(dd))
+            if shift == "休":
+                rest_count += 1
+        if rest_count != 2:
+            return False
+    return True
+
+
+def _would_exceed_consecutive(name, d, dates, schedule, pretend_rest=None):
+    idx = dates.index(d)
+    before = 0
+    for i in range(idx - 1, -1, -1):
+        dd = dates[i]
+        sh = schedule[name].get(dd, "") if dd != pretend_rest else "休"
+        if sh in WORK_SHIFTS:
+            before += 1
+        else:
+            break
+    after = 0
+    for i in range(idx + 1, len(dates)):
+        dd = dates[i]
+        sh = schedule[name].get(dd, "") if dd != pretend_rest else "休"
+        if sh in WORK_SHIFTS:
+            after += 1
+        else:
+            break
+    return before + 1 + after >= 5
+
+
+def _fill_required_coverage(staff_list, dates, schedule, req_map, targets):
+    """稲葉耕太休み日の必須7名に限り、月間目標超過を許容して日勤を補完する。"""
+    countable = [s for s in staff_list if not s.count_excluded and not s.sara_only and not s.delivery_only]
+
+    def _am(d):
+        return sum(1 for s in countable if schedule[s.name].get(d, "") in ("日", "A"))
+
+    def _pm(d):
+        return sum(1 for s in countable if schedule[s.name].get(d, "") in ("日", "P"))
+
+    for d in dates:
+        required_norm_day = schedule.get("稲葉耕太", {}).get(d, "") == "休"
+        if not required_norm_day:
+            continue
+        norm = _day_norm(d, schedule)
+        while _am(d) < norm or _pm(d) < norm:
+            candidates = []
+            for s in countable:
+                if schedule[s.name].get(d, "") != "休":
+                    continue
+                if not _can_assign(s.name, d, dates, schedule, req_map, require_empty=False):
+                    continue
+                if _would_exceed_consecutive(s.name, d, dates, schedule):
+                    continue
+                if not _respects_weekly_4work_after(s, dates, schedule, [(d, "日")]):
+                    continue
+                if not _respects_weekly_2rest_after(s, dates, schedule, [(d, "日")]):
+                    continue
+                candidates.append(s)
+            if not candidates:
+                break
+            candidates.sort(key=lambda s: sum(SHIFT_HOURS.get(schedule[s.name].get(dd, ""), 0) for dd in dates) - targets[s.name])
+            schedule[candidates[0].name][d] = "日"
+
+        while _am(d) > norm or _pm(d) > norm:
+            am_count = _am(d)
+            pm_count = _pm(d)
+            candidates = []
+            for s in countable:
+                shift = schedule[s.name].get(d, "")
+                if shift not in ("日", "A", "P"):
+                    continue
+                if req_map.get(s.name, {}).get(d) and req_map[s.name][d].req_type == "希望シフト":
+                    continue
+                if shift == "日" and (am_count <= norm or pm_count <= norm):
+                    continue
+                if shift == "A" and am_count <= norm:
+                    continue
+                if shift == "P" and pm_count <= norm:
+                    continue
+                if not _respects_weekly_4work_after(s, dates, schedule, [(d, "休")]):
+                    continue
+                if not _respects_weekly_2rest_after(s, dates, schedule, [(d, "休")]):
+                    continue
+                candidates.append(s)
+            if not candidates:
+                break
+            candidates.sort(key=lambda s: (
+                0 if schedule[s.name].get(d, "") in ("A", "P") else 1,
+                -(sum(SHIFT_HOURS.get(schedule[s.name].get(dd, ""), 0) for dd in dates) - targets[s.name]),
+            ))
+            schedule[candidates[0].name][d] = "休"
 
 
 # ── Phase 4: 中重度加算バランス後処理 ───────────────────────────────────
@@ -337,8 +483,7 @@ def _balance_nurse_coverage(staff_list, dates, schedule, req_map):
         return sum(1 for s in countable if schedule[s.name].get(d, "") in ("日", "P"))
 
     def _norm(d):
-        inaba_off = schedule.get("稲葉耕太", {}).get(d, "") == "休"
-        return 7 if inaba_off else AM_NORM
+        return _day_norm(d, schedule)
 
     def _nurses_on(d):
         return [s for s in nurses if schedule[s.name].get(d, "") in ("日", "A", "P")]
@@ -404,6 +549,8 @@ def _balance_nurse_coverage(staff_list, dates, schedule, req_map):
                         continue
                     if tgt_am + 1 > tgt_norm or tgt_pm + 1 > tgt_norm:
                         continue
+                    if not _respects_weekly_4work_after(nurse, dates, schedule, [(tgt, "日")]):
+                        continue
                     schedule[nurse.name][tgt] = "日"
                     improved = True
                     break
@@ -418,6 +565,8 @@ def _balance_nurse_coverage(staff_list, dates, schedule, req_map):
                     if not _can_work(nurse.name, tgt):
                         continue
                     if tgt_pm + 1 > tgt_norm:
+                        continue
+                    if not _respects_weekly_4work_after(nurse, dates, schedule, [(tgt, "P")]):
                         continue
                     schedule[nurse.name][tgt] = "P"
                     improved = True
@@ -469,6 +618,10 @@ def _balance_nurse_coverage(staff_list, dates, schedule, req_map):
                             src_rest = sum(1 for dd in src_week if schedule[nx.name].get(dd) == "休")
                             if len(src_week) == 7 and src_rest - 1 < 2:
                                 continue
+                        if not _respects_weekly_4work_after(nurse, dates, schedule, [(src, "休"), (tgt, "日")]):
+                            continue
+                        if not _respects_weekly_4work_after(nx, dates, schedule, [(src, "日"), (tgt, "休")]):
+                            continue
                         # 日↔日スワップ → AM/PM両日で不変
                         schedule[nurse.name][src] = "休"
                         schedule[nurse.name][tgt] = "日"
@@ -596,7 +749,15 @@ def _phase1_fixed(staff_list, dates, schedule, req_map):
 
             wd = d.weekday()
             if s.name == "堀太":
-                schedule[s.name][d] = "送迎" if wd in (6,0,3) else "休"; continue
+                if wd in (6, 3):
+                    schedule[s.name][d] = "朝夕"
+                elif wd == 0:
+                    schedule[s.name][d] = "夕"
+                else:
+                    schedule[s.name][d] = "休"
+                continue
+            if s.name == "岡野陽子":
+                schedule[s.name][d] = "日" if wd == 0 else "休"; continue
             if s.sara_only:
                 continue  # 皿洗いは _assign_sara_rotation で一括処理
             if s.name == "田村まどか":
@@ -642,21 +803,30 @@ def _phase1_fixed(staff_list, dates, schedule, req_map):
                 if name in schedule and schedule[name].get(d, "") == "":
                     schedule[name][d] = shift
 
-    # 岡谷佳代子・大久保夏南：奇数月→岡谷、偶数月→大久保に月1回「計」
+    # 岡谷佳代子・大久保夏南：通常は奇数月→岡谷、偶数月→大久保に月1回「計」
+    # 2026年6月のみ、2名それぞれに1日ずつ「計」を割り当てる
     year, month = dates[0].year, dates[0].month
-    kei_name = "岡谷佳代子" if month % 2 == 1 else "大久保夏南"
-    if kei_name in schedule:
+    kei_names = ["大久保夏南", "岡谷佳代子"] if (year, month) == (2026, 6) else [
+        "岡谷佳代子" if month % 2 == 1 else "大久保夏南"
+    ]
+    used_kei_dates = set()
+    for kei_name in kei_names:
+        if kei_name not in schedule:
+            continue
         for day_num in [15, 14, 16, 13, 17, 12, 18, 11, 19, 10, 20, 9, 21, 8, 22]:
             if day_num > dates[-1].day:
                 continue
             d_cand = datetime.date(year, month, day_num)
             if d_cand not in dates:
                 continue
+            if d_cand in used_kei_dates:
+                continue
             req = req_map.get(kei_name, {}).get(d_cand)
             if req and req.req_type == "希望休":
                 continue
             if schedule[kei_name].get(d_cand, "") == "":
                 schedule[kei_name][d_cand] = "計"
+                used_kei_dates.add(d_cand)
                 break
 
 
@@ -943,7 +1113,11 @@ def _assign_daytime_shift(d, day_idx, days_remaining, dates, schedule,
             break
 
         work_so_far = sum(SHIFT_HOURS.get(schedule[s.name].get(dd, ""), 0) for dd in dates)
-        if work_so_far >= targets[s.name]:
+        required_shortage = (
+            schedule.get("稲葉耕太", {}).get(d, "") == "休"
+            and (am_count < am_norm or pm_count < pm_norm)
+        )
+        if work_so_far >= targets[s.name] and not required_shortage:
             schedule[s.name][d] = "休"
             continue
 
@@ -985,6 +1159,31 @@ def _assign_daytime_shift(d, day_idx, days_remaining, dates, schedule,
         if shift in ("日", "P"):
             pm_count += 1
 
+    required_norm_day = schedule.get("稲葉耕太", {}).get(d, "") == "休"
+    while required_norm_day and pm_count < pm_norm and am_count >= am_norm:
+        a_workers = [
+            s for s in countable
+            if schedule[s.name].get(d, "") == "A"
+            and not (req_map.get(s.name, {}).get(d)
+                     and req_map[s.name][d].req_type == "希望シフト")
+        ]
+        day_candidates = [
+            s for s in countable
+            if schedule[s.name].get(d, "") == "休"
+            and not s.a_only
+            and _can_assign(s.name, d, dates, schedule, req_map, require_empty=False)
+        ]
+        if not a_workers or not day_candidates:
+            break
+        day_candidates.sort(key=score)
+        a_workers.sort(
+            key=lambda s: sum(SHIFT_HOURS.get(schedule[s.name].get(dd, ""), 0) for dd in dates),
+            reverse=True
+        )
+        schedule[a_workers[0].name][d] = "休"
+        schedule[day_candidates[0].name][d] = "日"
+        pm_count += 1
+
 
 def _pick_shift(s, am, pm, am_norm=AM_NORM, pm_norm=PM_NORM):
     name = s.name
@@ -998,8 +1197,7 @@ def _pick_shift(s, am, pm, am_norm=AM_NORM, pm_norm=PM_NORM):
         if pm < pm_norm: return "P"
         return "日"
     if name == "福山圭子":
-        if am < am_norm and pm < pm_norm: return "日"
-        return "夕"
+        return "日"
     if name in AP_STAFF and name not in {"東山鼓","塩内由可"}:
         if am < am_norm and pm < pm_norm: return "日"
         if pm < pm_norm: return "P"

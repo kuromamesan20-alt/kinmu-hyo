@@ -12,6 +12,8 @@ from agent1_input import (
 
 AM_NORM = 6   # 午前ノルマ
 PM_NORM = 6   # 午後ノルマ
+EXTRA_STAFF_WEEKDAYS = {0, 3, 5}  # 月・木・土は早出込み8人体制を目指す
+WORK_SHIFTS = {"早", "日", "A", "P", "準", "深", "夕", "計", "寺"}
 
 
 class ValidationResult:
@@ -78,6 +80,9 @@ def validate(schedule_data: dict) -> ValidationResult:
         if inaba_off:
             day_am_norm, day_pm_norm = 7, 7
             norm_required = True
+        elif d.weekday() in EXTRA_STAFF_WEEKDAYS:
+            day_am_norm, day_pm_norm = 7, 7
+            norm_required = False   # 月木土は8人体制を目指す努力目標
         elif anbe_active:
             day_am_norm, day_pm_norm = 7, 7
             norm_required = False   # 努力目標
@@ -92,13 +97,16 @@ def validate(schedule_data: dict) -> ValidationResult:
         ]
         am_count = len(am_members)
         if am_count < day_am_norm:
-            label = "" if norm_required else "（努力目標）"
-            result.warn(f"{date_str}：午前人数不足（{am_count}名／目標{day_am_norm}名）{label}")
-            if norm_required:
+            extra_day_hard_shortage = d.weekday() in EXTRA_STAFF_WEEKDAYS and am_count < AM_NORM
+            label = "" if (norm_required or extra_day_hard_shortage) else "（努力目標）"
+            target_label = AM_NORM if extra_day_hard_shortage else day_am_norm
+            result.warn(f"{date_str}：午前人数不足（{am_count}名／目標{target_label}名）{label}")
+            if norm_required or extra_day_hard_shortage:
                 for s in am_members:
                     result.red_cells.add((s.name, d))
         elif am_count > day_am_norm:
-            result.warn(f"{date_str}：午前人数過剰（{am_count}名／目標{day_am_norm}名）")
+            label = "" if norm_required else "（努力目標）"
+            result.warn(f"{date_str}：午前人数過剰（{am_count}名／目標{day_am_norm}名）{label}")
 
         # ── 午後カウント ──────────────────────────────────────────────
         pm_members = [
@@ -107,13 +115,16 @@ def validate(schedule_data: dict) -> ValidationResult:
         ]
         pm_count = len(pm_members)
         if pm_count < day_pm_norm:
-            label = "" if norm_required else "（努力目標）"
-            result.warn(f"{date_str}：午後人数不足（{pm_count}名／目標{day_pm_norm}名）{label}")
-            if norm_required:
+            extra_day_hard_shortage = d.weekday() in EXTRA_STAFF_WEEKDAYS and pm_count < PM_NORM
+            label = "" if (norm_required or extra_day_hard_shortage) else "（努力目標）"
+            target_label = PM_NORM if extra_day_hard_shortage else day_pm_norm
+            result.warn(f"{date_str}：午後人数不足（{pm_count}名／目標{target_label}名）{label}")
+            if norm_required or extra_day_hard_shortage:
                 for s in pm_members:
                     result.red_cells.add((s.name, d))
         elif pm_count > day_pm_norm:
-            result.warn(f"{date_str}：午後人数過剰（{pm_count}名／目標{day_pm_norm}名）")
+            label = "" if norm_required else "（努力目標）"
+            result.warn(f"{date_str}：午後人数過剰（{pm_count}名／目標{day_pm_norm}名）{label}")
 
         # ── 認知症加算チェック＆黄色セル ──────────────────────────────
         ninchi_workers = [
@@ -144,6 +155,7 @@ def validate(schedule_data: dict) -> ValidationResult:
     # ── 個人ルール違反チェック ───────────────────────────────────────
     for s in staff_list:
         _check_personal_rules(s, dates, schedule, result, month)
+        _check_weekly_4work(s, dates, schedule, result, month)
 
     return result
 
@@ -162,7 +174,7 @@ def _check_personal_rules(s, dates: list, schedule: dict, result: ValidationResu
                 result.warn(f"{name}：{month}月{d.day}日 深夜勤翌日に出勤（要休）")
 
         # 連続出勤カウント（送迎・相・事務・皿洗い・休は含めない）
-        if shift in ("早", "日", "A", "P", "準", "深", "夕"):
+        if shift in WORK_SHIFTS:
             consecutive += 1
             if consecutive > 4:
                 result.warn(f"{name}：{month}月{d.day}日 連続出勤{consecutive}日目（4日超過）")
@@ -173,8 +185,8 @@ def _check_personal_rules(s, dates: list, schedule: dict, result: ValidationResu
         if name in AP_FORBIDDEN and shift in ("A", "P"):
             result.warn(f"{name}：{month}月{d.day}日 A/P禁止なのに{shift}が入っている")
 
-        # 夕禁止チェック
-        if name not in YUKI_STAFF and shift == "夕":
+        # 夕禁止チェック（送迎担当の夕のみは除外）
+        if name not in YUKI_STAFF and not s.delivery_only and shift == "夕":
             result.warn(f"{name}：{month}月{d.day}日 夕禁止なのに夕が入っている")
 
     # 週次 A・P 回数チェック（AP_NO_LIMIT_STAFFは制限なし・石橋泉子のみ対象）
@@ -191,6 +203,20 @@ def _check_personal_rules(s, dates: list, schedule: dict, result: ValidationResu
                 )
 
 
+def _check_weekly_4work(s, dates: list, schedule: dict, result: ValidationResult, month: int):
+    if not s.weekly_4work:
+        return
+    for week in _split_sunday_weeks(dates):
+        if len(week) < 7:
+            continue
+        nichi_count = sum(1 for d in week if schedule[s.name].get(d, "") == "日")
+        if nichi_count != 4:
+            result.warn(
+                f"{s.name}：{month}月 週{week[0].day}〜{week[-1].day} "
+                f"日勤{nichi_count}日（週4日ちょうど）"
+            )
+
+
 def _split_weeks(dates: list[datetime.date]) -> list[list[datetime.date]]:
     """月の日付を週単位に分割（月曜始まり）"""
     weeks = []
@@ -198,6 +224,22 @@ def _split_weeks(dates: list[datetime.date]) -> list[list[datetime.date]]:
     for d in dates:
         current_week.append(d)
         if d.weekday() == 6:  # 日曜でリセット
+            weeks.append(current_week)
+            current_week = []
+    if current_week:
+        weeks.append(current_week)
+    return weeks
+
+
+def _split_sunday_weeks(dates: list[datetime.date]) -> list[list[datetime.date]]:
+    weeks = []
+    current_week = []
+    for d in dates:
+        if d.weekday() == 6 and current_week:
+            weeks.append(current_week)
+            current_week = []
+        current_week.append(d)
+        if d.weekday() == 5:
             weeks.append(current_week)
             current_week = []
     if current_week:
