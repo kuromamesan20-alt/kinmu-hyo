@@ -84,12 +84,16 @@ def apply_design(
         if req.req_type == "希望休"
     }
 
-    NAME_COL      = 1
-    DATE_START_COL = 2
+    ROLE_COL      = 1
+    NAME_COL      = 2
+    DATE_START_COL = 3
     HEADER_ROW    = 1
     WEEKDAY_ROW   = 2
     total_rows    = summary_start_row + summary_count - 1
-    total_cols    = DATE_START_COL + len(dates) - 1
+    date_end_col  = DATE_START_COL + len(dates) - 1
+    personal_summary_count = 6
+    personal_summary_start_col = date_end_col + 1
+    total_cols    = date_end_col + personal_summary_count
 
     # 土曜日の列セット（週区切り: 日〜土なので土曜右辺に太線）
     saturday_dates = {d for d in dates if d.weekday() == 5}
@@ -101,16 +105,19 @@ def apply_design(
         return d in saturday_dates if d else False
 
     # ── 列幅・行高 ──────────────────────────────────────────────────
+    ws.column_dimensions[get_column_letter(ROLE_COL)].width = 12
     ws.column_dimensions[get_column_letter(NAME_COL)].width = 12
     for i in range(len(dates)):
         ws.column_dimensions[get_column_letter(DATE_START_COL + i)].width = 4.5
+    for col in range(personal_summary_start_col, total_cols + 1):
+        ws.column_dimensions[get_column_letter(col)].width = 5.5
     ws.row_dimensions[HEADER_ROW].height = 18
     ws.row_dimensions[WEEKDAY_ROW].height = 16
     for row in staff_rows.values():
         ws.row_dimensions[row].height = 16
 
     # ── ヘッダー行（日付番号）────────────────────────────────────────
-    for col in range(NAME_COL, total_cols + 1):
+    for col in range(ROLE_COL, total_cols + 1):
         cell = ws.cell(row=HEADER_ROW, column=col)
         cell.fill      = _fill(COLOR_HEADER_BG)
         cell.font      = _font(bold=True, color=COLOR_HEADER_FG, size=10)
@@ -118,7 +125,10 @@ def apply_design(
         cell.border    = _border(is_sun_col(col))
 
     # ── 曜日行 ────────────────────────────────────────────────────────
-    ws.cell(row=WEEKDAY_ROW, column=NAME_COL).border = _border(False)
+    for col in (ROLE_COL, NAME_COL):
+        cell = ws.cell(row=WEEKDAY_ROW, column=col)
+        cell.fill = _fill(COLOR_WEEKDAY_ROW)
+        cell.border = _border(False)
     for i, d in enumerate(dates):
         col  = DATE_START_COL + i
         cell = ws.cell(row=WEEKDAY_ROW, column=col)
@@ -133,8 +143,14 @@ def apply_design(
         else:
             cell.fill = _fill(COLOR_WEEKDAY_ROW)
             cell.font = _font(size=9)
+    for col in range(personal_summary_start_col, total_cols + 1):
+        cell = ws.cell(row=WEEKDAY_ROW, column=col)
+        cell.fill      = _fill(COLOR_WEEKDAY_ROW)
+        cell.font      = _font(size=9)
+        cell.alignment = _center()
+        cell.border    = _border(False)
 
-    # ── 名前列（職種ごとに薄い背景）─────────────────────────────────
+    # ── 職種・名前列（職種ごとに薄い背景）────────────────────────────
     role_colors = {
         "管理者": "D9D9D9", "相談員": "DEEAF1",
         "介護":   "FFFFFF", "看護":   "E2EFDA",
@@ -143,11 +159,18 @@ def apply_design(
     }
     for s in staff_list:
         row  = staff_rows[s.name]
-        cell = ws.cell(row=row, column=NAME_COL)
-        cell.font      = _font(bold=True, size=9)
-        cell.alignment = Alignment(horizontal="left", vertical="center")
-        cell.fill      = _fill(role_colors.get(s.role, "FFFFFF"))
-        cell.border    = _border(False)
+        fill = _fill(role_colors.get(s.role, "FFFFFF"))
+        role_cell = ws.cell(row=row, column=ROLE_COL)
+        role_cell.font      = _font(size=9)
+        role_cell.alignment = Alignment(horizontal="left", vertical="center")
+        role_cell.fill      = fill
+        role_cell.border    = _border(False)
+
+        name_cell = ws.cell(row=row, column=NAME_COL)
+        name_cell.font      = _font(bold=True, size=9)
+        name_cell.alignment = Alignment(horizontal="left", vertical="center")
+        name_cell.fill      = fill
+        name_cell.border    = _border(False)
 
     # ── シフトセル ────────────────────────────────────────────────────
     for s in staff_list:
@@ -177,6 +200,12 @@ def apply_design(
             # 通常
             else:
                 cell.fill = _no_fill()
+        for col in range(personal_summary_start_col, total_cols + 1):
+            cell = ws.cell(row=row, column=col)
+            cell.alignment = _center()
+            cell.font      = _font(size=9)
+            cell.fill      = _no_fill()
+            cell.border    = _border(False)
 
     # ── 集計行 ────────────────────────────────────────────────────────
     def summary_required_norm(d: datetime.date) -> int:
@@ -188,10 +217,11 @@ def apply_design(
     for j in range(summary_count + 1):
         row = summary_start_row - 1 + j
         ws.row_dimensions[row].height = 15
-        label_cell = ws.cell(row=row, column=NAME_COL)
-        label_cell.fill      = _fill(COLOR_SUMMARY_BG)
-        label_cell.font      = _font(bold=True, size=9)
-        label_cell.border    = _border(False)
+        for label_col in (ROLE_COL, NAME_COL):
+            label_cell = ws.cell(row=row, column=label_col)
+            label_cell.fill      = _fill(COLOR_SUMMARY_BG)
+            label_cell.font      = _font(bold=True, size=9)
+            label_cell.border    = _border(False)
         for i in range(len(dates)):
             col  = DATE_START_COL + i
             cell = ws.cell(row=row, column=col)
@@ -204,9 +234,15 @@ def apply_design(
                 cell.font = _font(color="FF0000", bold=True, size=9)
             else:
                 cell.font = _font(size=9)
+        for col in range(personal_summary_start_col, total_cols + 1):
+            cell = ws.cell(row=row, column=col)
+            cell.fill      = _fill(COLOR_SUMMARY_BG)
+            cell.alignment = _center()
+            cell.border    = _border(False)
+            cell.font      = _font(size=9)
 
     # ── 外枠太線（上下左右）─────────────────────────────────────────
-    for col in range(NAME_COL, total_cols + 1):
+    for col in range(ROLE_COL, total_cols + 1):
         # 1行目の上辺
         c = ws.cell(row=1, column=col)
         b = c.border
@@ -217,8 +253,8 @@ def apply_design(
         c.border = Border(left=b.left, right=b.right, top=b.top, bottom=THICK)
 
     for row in range(1, total_rows + 1):
-        # 名前列の左辺
-        c = ws.cell(row=row, column=NAME_COL)
+        # 職種列の左辺
+        c = ws.cell(row=row, column=ROLE_COL)
         b = c.border
         c.border = Border(left=THICK, right=b.right, top=b.top, bottom=b.bottom)
         # 最終列の右辺
@@ -227,12 +263,12 @@ def apply_design(
         c.border = Border(left=b.left, right=THICK, top=b.top, bottom=b.bottom)
 
     # ── シート表示設定 ────────────────────────────────────────────────
-    ws.freeze_panes = "B3"
+    ws.freeze_panes = "C3"
     ws.sheet_view.showGridLines = False
 
     # ── 凡例 ─────────────────────────────────────────────────────────
     legend_row = total_rows + 2
-    ws.cell(row=legend_row, column=NAME_COL, value="【凡例】").font = _font(bold=True, size=9)
+    ws.cell(row=legend_row, column=ROLE_COL, value="【凡例】").font = _font(bold=True, size=9)
     legend_items = [
         ("黄", COLOR_YELLOW,     "認知症加算対象者が日勤"),
         ("薄ピンク", COLOR_PINK_NURSE, "中重度加算条件達成（看護師）"),
@@ -241,8 +277,8 @@ def apply_design(
     ]
     for k, (label, color, desc) in enumerate(legend_items):
         r = legend_row + 1 + k
-        ws.cell(row=r, column=NAME_COL, value=f"　{desc}").font = _font(size=9)
-        mark = ws.cell(row=r, column=NAME_COL + 1, value=label)
+        ws.cell(row=r, column=ROLE_COL, value=f"　{desc}").font = _font(size=9)
+        mark = ws.cell(row=r, column=NAME_COL, value=label)
         if color:
             mark.fill = _fill(color)
         else:

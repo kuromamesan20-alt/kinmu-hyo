@@ -15,10 +15,22 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 # 行レイアウト
 HEADER_ROW = 1     # 列ヘッダー（日付・曜日）
 STAFF_START_ROW = 2  # スタッフ行開始
-NAME_COL = 1       # 名前列（A列）
-DATE_START_COL = 2  # 日付開始列（B列）
+ROLE_COL = 1       # 職種列（A列）
+NAME_COL = 2       # 名前列（B列）
+DATE_START_COL = 3  # 日付開始列（C列）
 
 WEEKDAY_JP = ["月", "火", "水", "木", "金", "土", "日"]
+
+ROLE_DISPLAY = {
+    "管理者": "管理者",
+    "相談員": "生活相談員",
+    "介護": "介護職員",
+    "看護": "看護師",
+    "OT": "作業療法士",
+    "送迎": "送迎",
+    "皿洗い": "お皿洗い",
+    "事務": "事務",
+}
 
 
 def export_to_excel(schedule_data: dict, validation_result=None) -> Path:
@@ -32,9 +44,11 @@ def export_to_excel(schedule_data: dict, validation_result=None) -> Path:
     ws = wb.active
     ws.title = f"{year}年{month}月"
 
-    # ── ヘッダー行（名前列） ──────────────────────────────────────────
+    # ── ヘッダー行（職種・名前列）─────────────────────────────────────
+    ws.cell(row=HEADER_ROW, column=ROLE_COL, value="職種")
     ws.cell(row=HEADER_ROW, column=NAME_COL, value="氏名")
-    ws.cell(row=HEADER_ROW + 1, column=NAME_COL, value="職種")
+    ws.cell(row=HEADER_ROW + 1, column=ROLE_COL, value="")
+    ws.cell(row=HEADER_ROW + 1, column=NAME_COL, value="")
 
     # ── 日付ヘッダー ─────────────────────────────────────────────────
     for i, d in enumerate(dates):
@@ -55,8 +69,8 @@ def export_to_excel(schedule_data: dict, validation_result=None) -> Path:
     for row_idx, s in enumerate(staff_list):
         row = STAFF_START_ROW + 1 + row_idx  # +1 for weekday row
         staff_rows[s.name] = row
+        ws.cell(row=row, column=ROLE_COL, value=ROLE_DISPLAY.get(s.role, s.role))
         ws.cell(row=row, column=NAME_COL, value=s.name)
-        ws.cell(row=row, column=NAME_COL + 0).comment = None  # placeholder
 
         for i, d in enumerate(dates):
             col = DATE_START_COL + i
@@ -81,10 +95,12 @@ def export_to_excel(schedule_data: dict, validation_result=None) -> Path:
     summary_labels = ["早", "午前(日+A)", "午後(日+P)", "準", "深", "夕・送迎"]
     summary_keys = ["早", "am", "pm", "準", "深", "夕送迎"]
 
+    ws.cell(row=summary_start_row - 1, column=ROLE_COL, value="")
     ws.cell(row=summary_start_row - 1, column=NAME_COL, value="──集計──")
 
     for j, (label, key) in enumerate(zip(summary_labels, summary_keys)):
         sum_row = summary_start_row + j
+        ws.cell(row=sum_row, column=ROLE_COL, value="")
         ws.cell(row=sum_row, column=NAME_COL, value=label)
 
         for i, d in enumerate(dates):
