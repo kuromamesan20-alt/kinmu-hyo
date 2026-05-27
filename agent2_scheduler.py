@@ -29,8 +29,11 @@ TAUE_FIXED = {
 
 AM_NORM = 6
 PM_NORM = 6
-WORK_SHIFTS = {"早", "日", "A", "P", "準", "深", "夕", "計", "寺"}
+WORK_SHIFTS = {"早", "日", "A", "P", "準", "深", "準ペア", "深ペア", "夕", "計", "寺"}
 EXTRA_STAFF_WEEKDAYS = {0, 3, 5}  # 月・木・土は早出込み8人体制を目指す
+SASAKI_NAME = "佐々木優奈"
+SASAKI_NIGHT_START = datetime.date(2026, 6, 16)
+SASAKI_TRAINING_MONTH_END = datetime.date(2026, 6, 30)
 
 
 def _day_norm(d, schedule, include_anbe_effort=False):
@@ -91,6 +94,7 @@ def build_schedule(year: int, month: int, input_data: dict) -> dict:
         # 2a: 深夜（準・深）確保
         for stype in ("深", "準"):
             _assign_night_shift(stype, d, dates, schedule, req_map, staff_list)
+            _assign_sasaki_training_pair(stype, d, dates, schedule, req_map, staff_list)
 
         # 2b: 早出確保
         _assign_early_shift(d, dates, schedule, req_map, staff_list)
@@ -122,6 +126,9 @@ def build_schedule(year: int, month: int, input_data: dict) -> dict:
 
     # Phase5: 必須ノルム日のAM/PM不足・過剰を最終補正
     _fill_required_coverage(staff_list, dates, schedule, req_map, targets)
+
+    # Phase6: 後段補正で崩れた週2休みを最後に締め直す
+    _balance_weekly_rest(staff_list, dates, schedule, req_map)
 
     return schedule
 
@@ -180,29 +187,19 @@ def _balance_weekly_rest(staff_list, dates, schedule, req_map):
                         continue
                     idx = dates.index(d)
                     prev = schedule[s.name].get(dates[idx - 1], "") if idx > 0 else ""
-                    if prev == "深":
+                    if _is_deep_shift(prev):
                         continue  # 深の翌日は必ず休み・変更不可
-                    if prev == "準":
+                    if _is_jun_shift(prev):
                         # 準の翌日は深でもOK（他に深担当がいない かつ 翌日が休みの場合のみ）
-                        deep_taken = any(schedule[st.name].get(d) == "深" for st in staff_list if st.name != s.name)
+                        deep_taken = any(_is_deep_shift(schedule[st.name].get(d)) for st in staff_list if st.name != s.name)
                         next_d = dates[idx + 1] if idx + 1 < len(dates) else None
                         next_is_rest = next_d is None or schedule[s.name].get(next_d) == "休"
-                        if not deep_taken and next_is_rest:
+                        sasaki_solo_deep_ok = _sasaki_can_solo_night(s, "深", d, dates, schedule)
+                        if not deep_taken and next_is_rest and sasaki_solo_deep_ok:
                             schedule[s.name][d] = "深"
                             changed += 1
                         continue
-                    # AMノルムを超える日への日勤追加は行わない
-                    day_norm = _day_norm(d, schedule, include_anbe_effort=True)
-                    countable_names = {
-                        st.name for st in staff_list
-                        if not st.count_excluded and not st.sara_only and not st.delivery_only
-                    }
-                    am_now = sum(
-                        1 for st in staff_list
-                        if st.name in countable_names and schedule[st.name].get(d) in ("日", "A")
-                    )
-                    if am_now >= day_norm:
-                        continue  # ノルム達成済みなので日勤追加しない
+                    # 週2休み厳守を人数ノルムより優先する
                     # 変換後に連続5日以上にならないか確認
                     before_chain = 0
                     for k in range(idx - 1, -1, -1):
@@ -322,7 +319,7 @@ def _balance_weekly_4work(staff_list, dates, schedule, req_map):
                     # 週4日勤固定を優先し、連続勤務だけ確認する
                     idx = dates.index(d)
                     prev = schedule[s.name].get(dates[idx - 1], "") if idx > 0 else ""
-                    if prev in ("深", "準"):
+                    if _is_deep_shift(prev) or _is_jun_shift(prev):
                         continue
                     # 連続5日以上になるか確認
                     before_chain = 0
@@ -516,7 +513,7 @@ def _balance_nurse_coverage(staff_list, dates, schedule, req_map):
         if idx > 0:
             prev = dates[idx - 1]
             ps = schedule[name].get(prev, "") if prev != pretend_rest else "休"
-            if ps in ("深", "準"):
+            if _is_deep_shift(ps) or _is_jun_shift(ps):
                 return False
         before = 0
         for i in range(idx - 1, max(idx - 5, -1), -1):
@@ -568,6 +565,8 @@ def _balance_nurse_coverage(staff_list, dates, schedule, req_map):
                         continue
                     if not _respects_weekly_4work_after(nurse, dates, schedule, [(tgt, "日")]):
                         continue
+                    if not _respects_weekly_2rest_after(nurse, dates, schedule, [(tgt, "日")]):
+                        continue
                     schedule[nurse.name][tgt] = "日"
                     improved = True
                     break
@@ -584,6 +583,8 @@ def _balance_nurse_coverage(staff_list, dates, schedule, req_map):
                     if tgt_pm + 1 > tgt_norm:
                         continue
                     if not _respects_weekly_4work_after(nurse, dates, schedule, [(tgt, "P")]):
+                        continue
+                    if not _respects_weekly_2rest_after(nurse, dates, schedule, [(tgt, "P")]):
                         continue
                     schedule[nurse.name][tgt] = "P"
                     improved = True
@@ -627,17 +628,13 @@ def _balance_nurse_coverage(staff_list, dates, schedule, req_map):
                             continue
                         if not _can_work(nx.name, src, pretend_rest=tgt):
                             continue
-                        # 週2休み厳守スタッフ: スワップでsrc週の休みが2未満に減るなら不可
-                        if nx.weekly_2rest:
-                            days_since_sun = (src.weekday() + 1) % 7
-                            ws = src - datetime.timedelta(days=days_since_sun)
-                            src_week = [dd for dd in dates if ws <= dd < ws + datetime.timedelta(days=7)]
-                            src_rest = sum(1 for dd in src_week if schedule[nx.name].get(dd) == "休")
-                            if len(src_week) == 7 and src_rest - 1 < 2:
-                                continue
                         if not _respects_weekly_4work_after(nurse, dates, schedule, [(src, "休"), (tgt, "日")]):
                             continue
                         if not _respects_weekly_4work_after(nx, dates, schedule, [(src, "日"), (tgt, "休")]):
+                            continue
+                        if not _respects_weekly_2rest_after(nurse, dates, schedule, [(src, "休"), (tgt, "日")]):
+                            continue
+                        if not _respects_weekly_2rest_after(nx, dates, schedule, [(src, "日"), (tgt, "休")]):
                             continue
                         # 日↔日スワップ → AM/PM両日で不変
                         schedule[nurse.name][src] = "休"
@@ -863,7 +860,7 @@ def _assign_taue_allhands(d, dates, schedule, req_map, staff_list, countable):
     # 1. 15日準夜担当者を16日日勤に（準→日の例外）
     if prev_d:
         for s in staff_list:
-            if schedule[s.name].get(prev_d) == "準" and schedule[s.name].get(d, "") == "":
+            if _is_jun_shift(schedule[s.name].get(prev_d)) and schedule[s.name].get(d, "") == "":
                 if s.name == "出野聡子":
                     continue  # 出野聡子は16日準夜が固定なのでスキップ
                 req = req_map.get(s.name, {}).get(d)
@@ -882,7 +879,7 @@ def _assign_taue_allhands(d, dates, schedule, req_map, staff_list, countable):
         req = req_map.get(s.name, {}).get(d)
         if req and req.req_type == "希望休":
             continue
-        if _prev_shift(s.name, d, dates, schedule) == "深":
+        if _is_deep_shift(_prev_shift(s.name, d, dates, schedule)):
             continue
         if _consecutive_before(s.name, d, dates, schedule) >= 4:
             continue
@@ -894,6 +891,18 @@ def _assign_taue_allhands(d, dates, schedule, req_map, staff_list, countable):
 def _prev_shift(name, d, dates, schedule):
     idx = dates.index(d)
     return schedule[name].get(dates[idx-1], "") if idx > 0 else ""
+
+
+def _is_deep_shift(shift):
+    return shift in ("深", "深ペア")
+
+
+def _is_jun_shift(shift):
+    return shift in ("準", "準ペア")
+
+
+def _pair_shift_for(stype):
+    return "深ペア" if stype == "深" else "準ペア"
 
 
 def _consecutive_before(name, d, dates, schedule):
@@ -914,9 +923,9 @@ def _can_assign(name, d, dates, schedule, req_map, require_empty=True):
         return False
     if req_map.get(name, {}).get(d) and req_map[name][d].req_type == "希望休":
         return False
-    if _prev_shift(name, d, dates, schedule) == "深":
+    if _is_deep_shift(_prev_shift(name, d, dates, schedule)):
         return False  # 深の翌日は休必須
-    if _prev_shift(name, d, dates, schedule) == "準":
+    if _is_jun_shift(_prev_shift(name, d, dates, schedule)):
         return False  # 準の翌日は休か深のみ（深は別途割り当て）
     if _consecutive_before(name, d, dates, schedule) >= 4:
         return False
@@ -941,6 +950,14 @@ def _next_day_occupied(name, d, dates, schedule):
     if idx + 1 >= len(dates):
         return False
     return schedule[name].get(dates[idx+1], "") not in ("", "休")
+
+
+def _next_day_disallowed_after_jun(name, d, dates, schedule):
+    """準の翌日に許可されないシフト（日勤など）が既に入っているか"""
+    idx = dates.index(d)
+    if idx + 1 >= len(dates):
+        return False
+    return schedule[name].get(dates[idx+1], "") not in ("", "休", "準", "深", "準ペア", "深ペア")
 
 
 def _night_would_overflow(s, d, dates, schedule):
@@ -998,6 +1015,7 @@ def _assign_night_shift(stype, d, dates, schedule, req_map, staff_list):
     night_ok = [s for s in staff_list
                 if s.night_ok and not s.sara_only and not s.delivery_only
                 and s.name != "稲葉耕太"
+                and _sasaki_can_solo_night(s, stype, d, dates, schedule)
                 and not (s.jun_only and stype == "深"
                          and not (s.name == "安部稚畝" and anbe_shin_ok))]
     def _deep_this_week(name, d):
@@ -1007,7 +1025,7 @@ def _assign_night_shift(stype, d, dates, schedule, req_map, staff_list):
         week_end = week_start + datetime.timedelta(days=7)
         return sum(
             1 for dd in dates
-            if week_start <= dd < week_end and schedule[name].get(dd) == "深"
+            if week_start <= dd < week_end and _is_deep_shift(schedule[name].get(dd))
         )
 
     if stype == "深":
@@ -1024,7 +1042,7 @@ def _assign_night_shift(stype, d, dates, schedule, req_map, staff_list):
         cands = [s for s in night_ok
                  if schedule[s.name][d] == ""
                  and not (req_map.get(s.name, {}).get(d) and req_map[s.name][d].req_type == "希望休")
-                 and _prev_shift(s.name, d, dates, schedule) != "深"
+                 and not _is_deep_shift(_prev_shift(s.name, d, dates, schedule))
                  and _consecutive_before(s.name, d, dates, schedule) < 4
                  and not _next_day_occupied(s.name, d, dates, schedule)
                  and not _next_day_is_kibou_rest(s, d)
@@ -1035,7 +1053,7 @@ def _assign_night_shift(stype, d, dates, schedule, req_map, staff_list):
             cands = [s for s in night_ok
                      if schedule[s.name][d] == ""
                      and not (req_map.get(s.name, {}).get(d) and req_map[s.name][d].req_type == "希望休")
-                     and _prev_shift(s.name, d, dates, schedule) != "深"
+                     and not _is_deep_shift(_prev_shift(s.name, d, dates, schedule))
                      and _consecutive_before(s.name, d, dates, schedule) < 4
                      and not _next_day_occupied(s.name, d, dates, schedule)
                      and not _next_day_is_kibou_rest(s, d)]
@@ -1047,7 +1065,7 @@ def _assign_night_shift(stype, d, dates, schedule, req_map, staff_list):
             if req_map.get(s.name, {}).get(d) and req_map[s.name][d].req_type == "希望休":
                 return False
             prev = _prev_shift(s.name, d, dates, schedule)
-            if prev == "深":
+            if _is_deep_shift(prev):
                 return False  # 深の翌日はNG
             if _consecutive_before(s.name, d, dates, schedule) >= 4:
                 return False
@@ -1065,10 +1083,57 @@ def _assign_night_shift(stype, d, dates, schedule, req_map, staff_list):
     # 翌日週の確定休み数が少ない順（Phase3が修正しやすい候補を優先）→ 夜勤回数少ない順
     cands.sort(key=lambda s: (
         _night_rest_in_next_week(s, d, dates, schedule),
-        sum(1 for dd in dates if schedule[s.name].get(dd) in ("準","深")),
+        sum(1 for dd in dates if schedule[s.name].get(dd) in ("準", "深", "準ペア", "深ペア")),
     ))
     if cands:
         schedule[cands[0].name][d] = stype
+
+
+def _sasaki_can_solo_night(s, stype, d, dates, schedule):
+    """佐々木優奈は6月中のみ該当夜勤のペア経験後に単独夜勤候補に入れる。
+
+    単月生成では6月実績を参照できないため、2026年7月以降は6月中に
+    ペア研修済みとして単独夜勤を許可する。
+    """
+    if s.name != SASAKI_NAME:
+        return True
+    if d < SASAKI_NIGHT_START:
+        return False
+    if d > SASAKI_TRAINING_MONTH_END:
+        return True
+    pair_shift = _pair_shift_for(stype)
+    return any(dd < d and schedule[SASAKI_NAME].get(dd) == pair_shift for dd in dates)
+
+
+def _assign_sasaki_training_pair(stype, d, dates, schedule, req_map, staff_list):
+    """佐々木優奈の初回準夜・初回深夜を既存担当者とのペアで追加する。"""
+    if d < SASAKI_NIGHT_START or SASAKI_NAME not in schedule:
+        return
+    if d > SASAKI_TRAINING_MONTH_END:
+        return
+    pair_shift = _pair_shift_for(stype)
+    if any(schedule[SASAKI_NAME].get(dd) == pair_shift for dd in dates if dd < d):
+        return
+    if schedule[SASAKI_NAME].get(d, "") != "":
+        return
+    if not any(s.name != SASAKI_NAME and schedule[s.name].get(d) == stype for s in staff_list):
+        return
+    req = req_map.get(SASAKI_NAME, {}).get(d)
+    if req and req.req_type == "希望休":
+        return
+    prev = _prev_shift(SASAKI_NAME, d, dates, schedule)
+    if _is_deep_shift(prev):
+        return
+    if stype == "深" and _next_day_occupied(SASAKI_NAME, d, dates, schedule):
+        return
+    if stype == "準" and _next_day_disallowed_after_jun(SASAKI_NAME, d, dates, schedule):
+        return
+    if _consecutive_before(SASAKI_NAME, d, dates, schedule) >= 4:
+        return
+    sasaki = next((s for s in staff_list if s.name == SASAKI_NAME), None)
+    if sasaki and _night_would_overflow(sasaki, d, dates, schedule):
+        return
+    schedule[SASAKI_NAME][d] = pair_shift
 
 
 # ── 2b: 早出 ─────────────────────────────────────────────────────────

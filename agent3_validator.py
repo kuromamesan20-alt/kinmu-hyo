@@ -6,14 +6,18 @@ import datetime
 import calendar
 from agent1_input import (
     SHIFT_HOURS, A_ONLY_STAFF, AP_ALLOWED, AP_FORBIDDEN,
-    YUKI_STAFF, NINCHI_STAFF, NURSE_STAFF, AP_NO_LIMIT_STAFF
+    YUKI_STAFF, NINCHI_STAFF, NURSE_STAFF, AP_NO_LIMIT_STAFF,
+    WEEKLY_2REST_STAFF
 )
 
 
 AM_NORM = 6   # 午前ノルマ
 PM_NORM = 6   # 午後ノルマ
 EXTRA_STAFF_WEEKDAYS = {0, 3, 5}  # 月・木・土は早出込み8人体制を目指す
-WORK_SHIFTS = {"早", "日", "A", "P", "準", "深", "夕", "計", "寺"}
+WORK_SHIFTS = {"早", "日", "A", "P", "準", "深", "準ペア", "深ペア", "夕", "計", "寺"}
+SASAKI_NAME = "佐々木優奈"
+SASAKI_NIGHT_START = datetime.date(2026, 6, 16)
+SASAKI_TRAINING_MONTH_END = datetime.date(2026, 6, 30)
 TERA_DATES = {
     datetime.date(2026, 6, 13),
     datetime.date(2026, 6, 14),
@@ -65,18 +69,22 @@ def validate(schedule_data: dict) -> ValidationResult:
             result.warn(f"{date_str}：早出{hayade_count}名（1名超過）")
 
         # ── 準夜勤チェック ────────────────────────────────────────────
-        jun_count = sum(1 for s in staff_list if schedule[s.name].get(d) == "準")
-        if jun_count == 0:
+        jun_main_count = sum(1 for s in staff_list if schedule[s.name].get(d) == "準")
+        jun_pair_count = sum(1 for s in staff_list if schedule[s.name].get(d) == "準ペア")
+        if jun_main_count == 0:
             result.warn(f"{date_str}：準夜勤0名（必須1名）")
-        elif jun_count > 1:
-            result.warn(f"{date_str}：準夜勤{jun_count}名（多い）")
+        elif jun_main_count > 1 or jun_pair_count > 1:
+            result.warn(f"{date_str}：準夜勤{jun_main_count + jun_pair_count}名（多い）")
 
         # ── 深夜勤チェック ────────────────────────────────────────────
-        deep_count = sum(1 for s in staff_list if schedule[s.name].get(d) == "深")
-        if deep_count == 0:
+        deep_main_count = sum(1 for s in staff_list if schedule[s.name].get(d) == "深")
+        deep_pair_count = sum(1 for s in staff_list if schedule[s.name].get(d) == "深ペア")
+        if deep_main_count == 0:
             result.warn(f"{date_str}：深夜勤0名（必須1名）")
-        elif deep_count > 1:
-            result.warn(f"{date_str}：深夜勤{deep_count}名（多い）")
+        elif deep_main_count > 1 or deep_pair_count > 1:
+            result.warn(f"{date_str}：深夜勤{deep_main_count + deep_pair_count}名（多い）")
+
+        _check_sasaki_pair_rules(d, staff_list, schedule, result, month)
 
         # ── 動的ノルム計算 ───────────────────────────────────────────
         inaba_shift = schedule["稲葉耕太"].get(d, "") if "稲葉耕太" in schedule else ""
@@ -164,6 +172,7 @@ def validate(schedule_data: dict) -> ValidationResult:
     # ── 個人ルール違反チェック ───────────────────────────────────────
     for s in staff_list:
         _check_personal_rules(s, dates, schedule, result, month)
+        _check_weekly_2rest(s, dates, schedule, result, month)
         _check_weekly_4work(s, dates, schedule, result, month)
 
     return result
@@ -173,14 +182,33 @@ def _check_personal_rules(s, dates: list, schedule: dict, result: ValidationResu
     name = s.name
 
     consecutive = 0
+    sasaki_jun_pair_done = False
+    sasaki_deep_pair_done = False
     for i, d in enumerate(dates):
         shift = schedule[name].get(d, "")
+
+        if name == SASAKI_NAME:
+            if d < SASAKI_NIGHT_START and shift in ("準", "深"):
+                result.warn(f"{name}：{month}月{d.day}日 6/16前の単独夜勤（{shift}）は禁止")
+            if SASAKI_NIGHT_START <= d <= SASAKI_TRAINING_MONTH_END:
+                if shift == "準" and not sasaki_jun_pair_done:
+                    result.warn(f"{name}：{month}月{d.day}日 準ペア前の単独準は禁止")
+                if shift == "深" and not sasaki_deep_pair_done:
+                    result.warn(f"{name}：{month}月{d.day}日 深ペア前の単独深は禁止")
+            if d > SASAKI_TRAINING_MONTH_END and shift in ("準ペア", "深ペア"):
+                result.warn(f"{name}：{month}月{d.day}日 7月以降のペア夜勤（{shift}）は禁止")
+            if shift == "準ペア":
+                sasaki_jun_pair_done = True
+            if shift == "深ペア":
+                sasaki_deep_pair_done = True
 
         # 深夜勤の翌日チェック
         if i > 0:
             prev_shift = schedule[name].get(dates[i - 1], "")
-            if prev_shift == "深" and shift not in ("休", ""):
+            if prev_shift in ("深", "深ペア") and shift not in ("休", ""):
                 result.warn(f"{name}：{month}月{d.day}日 深夜勤翌日に出勤（要休）")
+            if prev_shift in ("準", "準ペア") and shift not in ("休", "", "準", "深", "準ペア", "深ペア"):
+                result.warn(f"{name}：{month}月{d.day}日 準夜勤翌日に許可外シフト（{shift}）")
 
         # 連続出勤カウント（送迎・相・事務・皿洗い・休は含めない）
         if shift in WORK_SHIFTS:
@@ -208,8 +236,30 @@ def _check_personal_rules(s, dates: list, schedule: dict, result: ValidationResu
             if ap_count >= 2:
                 result.warn(
                     f"{name}：{month}月 週{week[0].day}〜{week[-1].day} "
-                    f"A/P {ap_count}回（週1回まで）"
+                f"A/P {ap_count}回（週1回まで）"
                 )
+
+
+def _check_sasaki_pair_rules(d: datetime.date, staff_list: list, schedule: dict, result: ValidationResult, month: int):
+    pair_to_main = {"準ペア": "準", "深ペア": "深"}
+    for pair_shift, main_shift in pair_to_main.items():
+        pair_members = [s.name for s in staff_list if schedule[s.name].get(d) == pair_shift]
+        if not pair_members:
+            continue
+
+        for name in pair_members:
+            if name != SASAKI_NAME:
+                result.warn(f"{name}：{month}月{d.day}日 佐々木優奈以外のペア勤務（{pair_shift}）は禁止")
+
+        if d < SASAKI_NIGHT_START and SASAKI_NAME in pair_members:
+            result.warn(f"{SASAKI_NAME}：{month}月{d.day}日 6/16前のペア夜勤（{pair_shift}）は禁止")
+
+        has_main = any(
+            s.name != SASAKI_NAME and schedule[s.name].get(d) == main_shift
+            for s in staff_list
+        )
+        if not has_main:
+            result.warn(f"{month}月{d.day}日：既存担当者なしのペア勤務（{pair_shift}）は禁止")
 
 
 def _check_weekly_4work(s, dates: list, schedule: dict, result: ValidationResult, month: int):
@@ -223,6 +273,20 @@ def _check_weekly_4work(s, dates: list, schedule: dict, result: ValidationResult
             result.warn(
                 f"{s.name}：{month}月 週{week[0].day}〜{week[-1].day} "
                 f"日勤{nichi_count}日（週4日ちょうど）"
+            )
+
+
+def _check_weekly_2rest(s, dates: list, schedule: dict, result: ValidationResult, month: int):
+    if s.name not in WEEKLY_2REST_STAFF:
+        return
+    for week in _split_sunday_weeks(dates):
+        if len(week) < 7:
+            continue
+        rest_count = sum(1 for d in week if schedule[s.name].get(d, "") == "休")
+        if rest_count != 2:
+            result.warn(
+                f"{s.name}：{month}月 週{week[0].day}〜{week[-1].day} "
+                f"休み{rest_count}日（週2日ちょうど）"
             )
 
 
