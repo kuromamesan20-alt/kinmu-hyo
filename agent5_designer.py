@@ -180,7 +180,7 @@ def apply_design(
             cell  = ws.cell(row=row, column=col)
             shift = schedule[s.name].get(d, "")
             cell.alignment = _center()
-            cell.font      = _font(bold=(shift in ("準", "深", "準ペア", "深ペア")), size=9)
+            cell.font      = _font(bold=(shift in ("準", "深")), size=9)
             cell.border    = _border(is_sun_col(col))
 
             # 認知症加算（黄）

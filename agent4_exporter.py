@@ -83,8 +83,8 @@ def export_to_excel(schedule_data: dict, validation_result=None) -> Path:
             shifts.count("早"),
             shifts.count("日"),
             shifts.count("A") + shifts.count("P"),
-            shifts.count("準") + shifts.count("準ペア"),
-            shifts.count("深") + shifts.count("深ペア"),
+            shifts.count("準"),
+            shifts.count("深"),
             shifts.count("休"),
         ]
         for k, cnt in enumerate(personal_counts):
@@ -132,9 +132,9 @@ def _count_summary(key: str, d: datetime.date, staff_list: list, schedule: dict)
             if not s.count_excluded and schedule[s.name].get(d) in ("日", "P")
         )
     if key == "準":
-        return sum(1 for s in staff_list if schedule[s.name].get(d) in ("準", "準ペア"))
+        return sum(1 for s in staff_list if schedule[s.name].get(d) == "準")
     if key == "深":
-        return sum(1 for s in staff_list if schedule[s.name].get(d) in ("深", "深ペア"))
+        return sum(1 for s in staff_list if schedule[s.name].get(d) == "深")
     if key == "夕送迎":
         return sum(
             1 for s in staff_list if schedule[s.name].get(d) in ("夕", "送迎", "朝夕")
