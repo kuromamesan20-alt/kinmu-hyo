@@ -14,6 +14,12 @@ AM_NORM = 6   # 午前ノルマ
 PM_NORM = 6   # 午後ノルマ
 EXTRA_STAFF_WEEKDAYS = {0, 3, 5}  # 月・木・土は早出込み8人体制を目指す
 WORK_SHIFTS = {"早", "日", "A", "P", "準", "深", "夕", "計", "寺"}
+TERA_DATES = {
+    datetime.date(2026, 6, 13),
+    datetime.date(2026, 6, 14),
+    datetime.date(2026, 6, 23),
+    datetime.date(2026, 6, 24),
+}
 
 
 class ValidationResult:
@@ -77,7 +83,10 @@ def validate(schedule_data: dict) -> ValidationResult:
         anbe_shift  = schedule["安部稚畝"].get(d, "")  if "安部稚畝"  in schedule else ""
         inaba_off   = inaba_shift == "休"
         anbe_active = anbe_shift in ("早", "日")
-        if inaba_off:
+        if d in TERA_DATES:
+            day_am_norm, day_pm_norm = 7, 7
+            norm_required = False   # 寺子屋日は稲葉耕太休みでも努力目標
+        elif inaba_off:
             day_am_norm, day_pm_norm = 7, 7
             norm_required = True
         elif d.weekday() in EXTRA_STAFF_WEEKDAYS:
@@ -97,7 +106,7 @@ def validate(schedule_data: dict) -> ValidationResult:
         ]
         am_count = len(am_members)
         if am_count < day_am_norm:
-            extra_day_hard_shortage = d.weekday() in EXTRA_STAFF_WEEKDAYS and am_count < AM_NORM
+            extra_day_hard_shortage = (d.weekday() in EXTRA_STAFF_WEEKDAYS or d in TERA_DATES) and am_count < AM_NORM
             label = "" if (norm_required or extra_day_hard_shortage) else "（努力目標）"
             target_label = AM_NORM if extra_day_hard_shortage else day_am_norm
             result.warn(f"{date_str}：午前人数不足（{am_count}名／目標{target_label}名）{label}")
@@ -115,7 +124,7 @@ def validate(schedule_data: dict) -> ValidationResult:
         ]
         pm_count = len(pm_members)
         if pm_count < day_pm_norm:
-            extra_day_hard_shortage = d.weekday() in EXTRA_STAFF_WEEKDAYS and pm_count < PM_NORM
+            extra_day_hard_shortage = (d.weekday() in EXTRA_STAFF_WEEKDAYS or d in TERA_DATES) and pm_count < PM_NORM
             label = "" if (norm_required or extra_day_hard_shortage) else "（努力目標）"
             target_label = PM_NORM if extra_day_hard_shortage else day_pm_norm
             result.warn(f"{date_str}：午後人数不足（{pm_count}名／目標{target_label}名）{label}")

@@ -12,8 +12,14 @@ from agent1_input import (
     SHIFT_HOURS, WEEKLY_2REST_STAFF, WEEKLY_4WORK_STAFF, AP_NO_LIMIT_STAFF
 )
 
-# 寺子屋研修日（月/日 固定）
+# 寺子屋研修日
 TERA_DAYS = {(5, 13), (5, 14)}
+TERA_DATES = {
+    datetime.date(2026, 6, 13),
+    datetime.date(2026, 6, 14),
+    datetime.date(2026, 6, 23),
+    datetime.date(2026, 6, 24),
+}
 TERA_STAFF = {"稲葉耕太", "出野聡子"}
 
 # 田植えイベント固定（月/日 → (スタッフ名, シフト)）
@@ -31,11 +37,19 @@ def _day_norm(d, schedule, include_anbe_effort=False):
     """日別の午前/午後ノルム（日+A、日+P）を返す。"""
     inaba_off = schedule.get("稲葉耕太", {}).get(d, "") == "休"
     anbe_active = schedule.get("安部稚畝", {}).get(d, "") in ("早", "日")
-    if inaba_off or d.weekday() in EXTRA_STAFF_WEEKDAYS:
+    if inaba_off or d.weekday() in EXTRA_STAFF_WEEKDAYS or _is_june_tera_effort_day(d):
         return 7
     if include_anbe_effort and anbe_active:
         return 7
     return AM_NORM
+
+
+def _is_tera_day(d):
+    return (d.month, d.day) in TERA_DAYS or d in TERA_DATES
+
+
+def _is_june_tera_effort_day(d):
+    return d in TERA_DATES
 
 
 def get_month_dates(year: int, month: int) -> list:
@@ -106,7 +120,7 @@ def build_schedule(year: int, month: int, input_data: dict) -> dict:
     # Phase4: 中重度加算の看護師配置バランス後処理
     _balance_nurse_coverage(staff_list, dates, schedule, req_map)
 
-    # Phase5: 稲葉耕太休み日のAM/PM不足を最終補完
+    # Phase5: 必須ノルム日のAM/PM不足・過剰を最終補正
     _fill_required_coverage(staff_list, dates, schedule, req_map, targets)
 
     return schedule
@@ -397,7 +411,7 @@ def _would_exceed_consecutive(name, d, dates, schedule, pretend_rest=None):
 
 
 def _fill_required_coverage(staff_list, dates, schedule, req_map, targets):
-    """稲葉耕太休み日の必須7名に限り、月間目標超過を許容して日勤を補完する。"""
+    """必須ノルム日の人数不足・過剰を補正する。"""
     countable = [s for s in staff_list if not s.count_excluded and not s.sara_only and not s.delivery_only]
 
     def _am(d):
@@ -407,7 +421,10 @@ def _fill_required_coverage(staff_list, dates, schedule, req_map, targets):
         return sum(1 for s in countable if schedule[s.name].get(d, "") in ("日", "P"))
 
     for d in dates:
-        required_norm_day = schedule.get("稲葉耕太", {}).get(d, "") == "休"
+        inaba_off = schedule.get("稲葉耕太", {}).get(d, "") == "休"
+        anbe_active = schedule.get("安部稚畝", {}).get(d, "") in ("早", "日")
+        effort_norm_day = d.weekday() in EXTRA_STAFF_WEEKDAYS or _is_june_tera_effort_day(d) or anbe_active
+        required_norm_day = False if _is_june_tera_effort_day(d) else inaba_off or not effort_norm_day
         if not required_norm_day:
             continue
         norm = _day_norm(d, schedule)
@@ -720,11 +737,13 @@ def _assign_inaba_rotation(dates, schedule, req_map, year, month):
     # 既確定の休み以外の候補日
     candidates = [d for d in dates if schedule["稲葉耕太"][d] == ""]
 
-    already_work = sum(1 for d in dates if schedule["稲葉耕太"][d] == "相")
+    already_work = sum(1 for d in dates if schedule["稲葉耕太"][d] in ("相", "寺"))
     needed = max(0, target - already_work)
 
     # 均等間隔で勤務日を選択
-    if needed >= len(candidates):
+    if needed <= 0:
+        work_days = set()
+    elif needed >= len(candidates):
         work_days = set(candidates)
     else:
         step = len(candidates) / needed
@@ -795,8 +814,8 @@ def _phase1_fixed(staff_list, dates, schedule, req_map):
 
     # 寺子屋研修（出野聡子）・田植えイベント固定
     for d in dates:
-        if (d.month, d.day) in TERA_DAYS:
-            if schedule.get("出野聡子", {}).get(d, "") == "":
+        if _is_tera_day(d):
+            if "出野聡子" in schedule:
                 schedule["出野聡子"][d] = "寺"
         if (d.month, d.day) in TAUE_FIXED:
             for name, shift in TAUE_FIXED[(d.month, d.day)]:

@@ -20,6 +20,12 @@ PM_NORM = 6
 # 集計行のj番目（0=separator,1=早,2=am,3=pm,...）→ 基準人数
 _SUMMARY_NORMS = {2: AM_NORM, 3: PM_NORM}
 EXTRA_STAFF_WEEKDAYS = {0, 3, 5}
+TERA_DATES = {
+    datetime.date(2026, 6, 13),
+    datetime.date(2026, 6, 14),
+    datetime.date(2026, 6, 23),
+    datetime.date(2026, 6, 24),
+}
 
 COLOR_SUMMARY_BG  = "F2F2F2"   # 集計行背景
 
@@ -175,7 +181,7 @@ def apply_design(
     # ── 集計行 ────────────────────────────────────────────────────────
     def summary_required_norm(d: datetime.date) -> int:
         inaba_off = schedule.get("稲葉耕太", {}).get(d, "") == "休"
-        if inaba_off:
+        if inaba_off or d in TERA_DATES:
             return 7
         return AM_NORM
 
