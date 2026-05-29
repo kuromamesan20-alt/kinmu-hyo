@@ -7,6 +7,7 @@ import datetime
 import calendar
 from pathlib import Path
 import streamlit as st
+from demo_display import DEMO_MODE, display_name, display_names, display_text, unknown_demo_names
 
 st.set_page_config(page_title="勤務表作成", layout="wide")
 
@@ -191,6 +192,8 @@ tab1, tab2 = st.tabs(["📅 希望休入力", "📊 勤務表作成"])
 # ══════════════════════════════════════════════════════════════════════
 with tab1:
     st.header("希望休入力")
+    if DEMO_MODE:
+        st.info("デモ表示中：スタッフ名は仮名で表示しています。")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -205,6 +208,9 @@ with tab1:
     st.divider()
 
     staff_names = load_staff_names()
+    unknown_names = unknown_demo_names(staff_names)
+    if unknown_names:
+        st.warning(f"デモ用の仮名が未登録のスタッフが{len(unknown_names)}名います。汎用仮名で表示します。")
     existing = load_existing_requests(req_year, req_month)
 
     inputs = {}
@@ -212,7 +218,7 @@ with tab1:
         existing_days = existing.get(name, [])
         default_text = " ".join(str(d) for d in existing_days)
         val = st.text_input(
-            name,
+            display_name(name),
             value=default_text,
             placeholder="例：3, 15, 25",
             key=f"req_{name}",
@@ -229,7 +235,7 @@ with tab1:
             if days:
                 requests_to_save[name] = days
             else:
-                errors.append(f"{name}：入力値が無効です（{text}）")
+                errors.append(f"{display_name(name)}：入力値が無効です（{text}）")
 
         if errors:
             for e in errors:
@@ -245,6 +251,8 @@ with tab1:
 # ══════════════════════════════════════════════════════════════════════
 with tab2:
     st.header("勤務表作成")
+    if DEMO_MODE:
+        st.info("デモ表示中：スタッフ名は仮名で表示しています。")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -266,6 +274,7 @@ with tab2:
             input_data = build_input(year, month)
             dates = get_month_dates(year, month)
             schedule = build_schedule(year, month, input_data)
+            staff_names = [s.name for s in input_data["staff_list"]]
             schedule_data = {
                 "year": year,
                 "month": month,
@@ -273,6 +282,7 @@ with tab2:
                 "staff_list": input_data["staff_list"],
                 "schedule": schedule,
                 "req_map": input_data["req_map"],
+                "display_names": display_names(staff_names),
             }
 
             vr = validate(schedule_data)
@@ -292,18 +302,18 @@ with tab2:
             st.error(f"⚠️ 必須ルール違反 {len(required_warnings)}件")
             with st.expander("詳細を見る"):
                 for w in required_warnings:
-                    st.write(f"- {w}")
+                    st.write(f"- {display_text(w, staff_names)}")
         else:
             st.info("必須ルール違反：なし")
 
         if effort_warnings:
             with st.expander(f"努力目標未達 {len(effort_warnings)}件"):
                 for w in effort_warnings:
-                    st.write(f"- {w}")
+                    st.write(f"- {display_text(w, staff_names)}")
 
         st.download_button(
             label="📥 Excelをダウンロード",
             data=buf,
-            file_name=f"勤務表_{year}年{month}月.xlsx",
+            file_name=f"勤務表_{year}年{month}月{'_デモ' if DEMO_MODE else ''}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )

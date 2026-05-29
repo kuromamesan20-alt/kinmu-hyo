@@ -4,6 +4,8 @@ agent3_validator.py: 検証
 """
 import datetime
 import calendar
+from typing import Optional
+from demo_display import display_text
 from agent1_input import (
     SHIFT_HOURS, A_ONLY_STAFF, AP_ALLOWED, AP_FORBIDDEN,
     YUKI_STAFF, NINCHI_STAFF, NURSE_STAFF, AP_NO_LIMIT_STAFF,
@@ -24,7 +26,8 @@ TERA_DATES = {
 
 
 class ValidationResult:
-    def __init__(self):
+    def __init__(self, staff_names: Optional[list[str]] = None):
+        self.staff_names = staff_names
         self.warnings: list[str] = []
         # red_cells: {(name, date)} 人員不足でハイライトすべきセル（赤）
         self.red_cells: set[tuple] = set()
@@ -35,7 +38,7 @@ class ValidationResult:
 
     def warn(self, msg: str):
         self.warnings.append(msg)
-        print(f"[WARNING] {msg}")
+        print(f"[WARNING] {display_text(msg, self.staff_names)}")
 
 
 def validate(schedule_data: dict) -> ValidationResult:
@@ -46,7 +49,7 @@ def validate(schedule_data: dict) -> ValidationResult:
     schedule: dict = schedule_data["schedule"]
     req_map: dict = schedule_data.get("req_map", {})
 
-    result = ValidationResult()
+    result = ValidationResult([s.name for s in staff_list])
     staff_by_name = {s.name: s for s in staff_list}
 
     for d in dates:

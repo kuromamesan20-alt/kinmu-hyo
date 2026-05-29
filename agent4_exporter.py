@@ -8,6 +8,7 @@ from pathlib import Path
 import openpyxl
 from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
+from demo_display import DEMO_MODE, display_names
 
 OUTPUT_DIR = Path(__file__).parent / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
@@ -39,6 +40,9 @@ def export_to_excel(schedule_data: dict, validation_result=None) -> Path:
     dates: list[datetime.date] = schedule_data["dates"]
     staff_list = schedule_data["staff_list"]
     schedule: dict = schedule_data["schedule"]
+    display_name_map: dict[str, str] = schedule_data.get("display_names", {})
+    if DEMO_MODE and not display_name_map:
+        display_name_map = display_names([s.name for s in staff_list])
 
     wb = Workbook()
     ws = wb.active
@@ -70,7 +74,7 @@ def export_to_excel(schedule_data: dict, validation_result=None) -> Path:
         row = STAFF_START_ROW + 1 + row_idx  # +1 for weekday row
         staff_rows[s.name] = row
         ws.cell(row=row, column=ROLE_COL, value=ROLE_DISPLAY.get(s.role, s.role))
-        ws.cell(row=row, column=NAME_COL, value=s.name)
+        ws.cell(row=row, column=NAME_COL, value=display_name_map.get(s.name, s.name))
 
         for i, d in enumerate(dates):
             col = DATE_START_COL + i

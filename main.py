@@ -5,6 +5,7 @@ python main.py 2026 4       → 指定年月の勤務表を生成
 """
 import sys
 import datetime
+from demo_display import display_names
 
 def main():
     if len(sys.argv) == 3:
@@ -39,6 +40,7 @@ def main():
         "staff_list": input_data["staff_list"],
         "schedule": schedule,
         "req_map": input_data["req_map"],
+        "display_names": display_names([s.name for s in input_data["staff_list"]]),
     }
     print(f"  {len(dates)}日分のシフトを計算しました")
 
