@@ -4,6 +4,7 @@ agent5_designer.py: デザイン
 import datetime
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+from openpyxl.formatting.rule import CellIsRule
 from openpyxl.utils import get_column_letter
 
 # ── カラー定義 ──────────────────────────────────────────────────────
@@ -230,10 +231,14 @@ def apply_design(
             cell.border    = _border(is_sun_col(col))
             val = cell.value
             target = summary_required_norm(dates[i]) if j in _SUMMARY_NORMS else _SUMMARY_NORMS.get(j)
-            if j in _SUMMARY_NORMS and isinstance(val, int) and val < target:
-                cell.font = _font(color="FF0000", bold=True, size=9)
-            else:
-                cell.font = _font(size=9)
+            cell.font = _font(size=9)
+            if j in _SUMMARY_NORMS:
+                if isinstance(val, int) and val < target:
+                    cell.font = _font(color="FF0000", bold=True, size=9)
+                ws.conditional_formatting.add(
+                    cell.coordinate,
+                    CellIsRule(operator="lessThan", formula=[str(target)], font=_font(color="FF0000", bold=True, size=9)),
+                )
         for col in range(personal_summary_start_col, total_cols + 1):
             cell = ws.cell(row=row, column=col)
             cell.fill      = _fill(COLOR_SUMMARY_BG)
