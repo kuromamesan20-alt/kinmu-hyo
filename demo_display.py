@@ -5,7 +5,7 @@
 """
 from typing import Optional
 
-DEMO_MODE = True
+DEMO_MODE = False
 
 DEMO_NAME_MAP = {
     "稲葉耕太": "黒豆さん太郎",
