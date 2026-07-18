@@ -67,6 +67,7 @@ def build_schedule(year: int, month: int, input_data: dict) -> dict:
     staff_list = input_data["staff_list"]
     req_map = input_data["req_map"]
     dates = get_month_dates(year, month)
+    prev_month_deep_staff = input_data.get("prev_month_deep_staff")
 
     schedule = {s.name: {d: "" for d in dates} for s in staff_list}
 
@@ -78,6 +79,9 @@ def build_schedule(year: int, month: int, input_data: dict) -> dict:
 
     # 稲葉耕太：週5日・全て「相」・休みはどの曜日でも可
     _assign_inaba_rotation(dates, schedule, req_map, year, month)
+
+    # 前月末日の深夜担当者は、当月1日を深夜明け休みにする
+    _apply_prev_month_deep_rest(prev_month_deep_staff, dates, schedule)
 
     # カウント対象スタッフと月間目標
     countable = [s for s in staff_list
@@ -112,7 +116,7 @@ def build_schedule(year: int, month: int, input_data: dict) -> dict:
                 schedule[s.name][d] = "休"
 
     # Phase3: 週2休み厳守スタッフの調整
-    _balance_weekly_rest(staff_list, dates, schedule, req_map)
+    _balance_weekly_rest(staff_list, dates, schedule, req_map, prev_month_deep_staff)
 
     # Phase3.5: 週4日勤固定スタッフの調整
     _balance_weekly_4work(staff_list, dates, schedule, req_map)
@@ -124,9 +128,21 @@ def build_schedule(year: int, month: int, input_data: dict) -> dict:
     _fill_required_coverage(staff_list, dates, schedule, req_map, targets)
 
     # Phase6: 後段補正で崩れた週2休みを最後に締め直す
-    _balance_weekly_rest(staff_list, dates, schedule, req_map)
+    _balance_weekly_rest(staff_list, dates, schedule, req_map, prev_month_deep_staff)
+
+    # 最終補正でも上書きされないよう、最後にもう一度固定する
+    _apply_prev_month_deep_rest(prev_month_deep_staff, dates, schedule)
 
     return schedule
+
+
+def _apply_prev_month_deep_rest(prev_month_deep_staff, dates, schedule):
+    """前月末日の深夜担当者を当月1日に休みに固定する。"""
+    if not prev_month_deep_staff or not dates:
+        return
+    if prev_month_deep_staff not in schedule:
+        return
+    schedule[prev_month_deep_staff][dates[0]] = "休"
 
 
 # ── Phase 3: 週2休み調整 ──────────────────────────────────────────────
@@ -142,7 +158,7 @@ def _get_sunday_weeks(dates):
     return [sorted(v) for v in sorted(weeks.values())]
 
 
-def _balance_weekly_rest(staff_list, dates, schedule, req_map):
+def _balance_weekly_rest(staff_list, dates, schedule, req_map, prev_month_deep_staff=None):
     """週2休み厳守スタッフの休みを週単位でちょうど2日に調整"""
     two_rest_staff = [s for s in staff_list if s.weekly_2rest]
     if not two_rest_staff:
@@ -179,6 +195,8 @@ def _balance_weekly_rest(staff_list, dates, schedule, req_map):
                 for d in rest_days:
                     if changed >= excess:
                         break
+                    if s.name == prev_month_deep_staff and d == dates[0]:
+                        continue  # 前月深夜明け休は変更不可
                     if is_kibou_rest(d):
                         continue
                     idx = dates.index(d)

@@ -84,6 +84,9 @@ def apply_design(
         for d, req in reqs.items()
         if req.req_type == "希望休"
     }
+    prev_month_deep_staff = schedule_data.get("prev_month_deep_staff")
+    if prev_month_deep_staff and dates:
+        kibou_rest.discard((prev_month_deep_staff, dates[0]))
 
     ROLE_COL      = 1
     NAME_COL      = 2

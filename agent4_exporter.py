@@ -42,6 +42,7 @@ def export_to_excel(schedule_data: dict, validation_result=None) -> Path:
     schedule: dict = schedule_data["schedule"]
     req_map: dict = schedule_data.get("req_map", {})
     display_name_map: dict[str, str] = schedule_data.get("display_names", {})
+    prev_month_deep_staff = schedule_data.get("prev_month_deep_staff")
     if DEMO_MODE and not display_name_map:
         display_name_map = display_names([s.name for s in staff_list])
 
@@ -84,7 +85,10 @@ def export_to_excel(schedule_data: dict, validation_result=None) -> Path:
             col = DATE_START_COL + i
             shift = schedule[s.name].get(d, "")
             req = req_map.get(s.name, {}).get(d)
-            if shift == "休" and not (req and req.req_type == "希望休"):
+            is_prev_month_deep_rest = s.name == prev_month_deep_staff and d == dates[0]
+            if shift == "休" and (
+                is_prev_month_deep_rest or not (req and req.req_type == "希望休")
+            ):
                 value = None
             elif shift == "皿洗い":
                 value = "○"

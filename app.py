@@ -254,6 +254,8 @@ with tab2:
     if DEMO_MODE:
         st.info("デモ表示中：スタッフ名は仮名で表示しています。")
 
+    from agent1_input import build_input
+
     col1, col2 = st.columns(2)
     with col1:
         year = st.selectbox("年", years, index=years.index(default_year), key="sched_year")
@@ -263,18 +265,43 @@ with tab2:
 
     st.write(f"対象：**{year}年{month}月**")
 
+    input_data = build_input(year, month)
+    staff_names = [s.name for s in input_data["staff_list"]]
+    prev_month_last_day = datetime.date(year, month, 1) - datetime.timedelta(days=1)
+    night_staff_names = [
+        s.name
+        for s in input_data["staff_list"]
+        if s.night_ok
+        and (
+            not s.jun_only
+            or (
+                s.name == "安部稚畝"
+                and (prev_month_last_day.year, prev_month_last_day.month) == (2026, 5)
+            )
+        )
+    ]
+    prev_deep_options = [""] + night_staff_names
+    prev_deep_staff = st.selectbox(
+        "前月末日の深夜担当者",
+        prev_deep_options,
+        format_func=lambda name: "選択なし" if name == "" else display_name(name),
+        key="prev_month_deep_staff",
+    )
+    st.caption(
+        f"{prev_month_last_day.month}月{prev_month_last_day.day}日に深夜だった人を選ぶと、"
+        f"{month}月1日が自動で休みになります。"
+    )
+
     if st.button("勤務表を作成する", type="primary", key="make_schedule"):
         with st.spinner("シフトを計算中..."):
-            from agent1_input import build_input
             from agent2_scheduler import build_schedule, get_month_dates
             from agent3_validator import validate
             from agent4_exporter import export_to_excel
             from agent5_designer import apply_design
 
-            input_data = build_input(year, month)
+            input_data["prev_month_deep_staff"] = prev_deep_staff or None
             dates = get_month_dates(year, month)
             schedule = build_schedule(year, month, input_data)
-            staff_names = [s.name for s in input_data["staff_list"]]
             schedule_data = {
                 "year": year,
                 "month": month,
@@ -283,6 +310,7 @@ with tab2:
                 "schedule": schedule,
                 "req_map": input_data["req_map"],
                 "display_names": display_names(staff_names),
+                "prev_month_deep_staff": prev_deep_staff or None,
             }
 
             vr = validate(schedule_data)
