@@ -53,26 +53,63 @@ def load_staff_names() -> list[str]:
     return names
 
 
-def load_existing_requests(year: int, month: int) -> dict[str, list[int]]:
-    """既存のrequests.csvから指定年月の希望休を読み込む"""
+# agent2_scheduler.WORK_SHIFTS のうち、希望として入力を受け付けるもの
+ALLOWED_SHIFTS = ["早", "日", "A", "P", "準", "深", "夕"]
+
+
+def normalize_shift_requests(text: str, year: int, month: int) -> tuple[dict[int, str], list[str]]:
+    """「3:日 15:A」形式の希望シフト文字列を {日: シフト} に変換。無効なトークンも返す"""
+    text = text.translate(str.maketrans("０１２３４５６７８９ＡＰ：", "0123456789AP:"))
+    _, last_day = calendar.monthrange(year, month)
+    result: dict[int, str] = {}
+    invalid: list[str] = []
+    for token in text.replace("、", " ").replace("，", " ").replace(",", " ").replace("　", " ").split():
+        day_str, sep, shift = token.partition(":")
+        shift = shift.strip().upper()
+        if not sep or shift not in ALLOWED_SHIFTS:
+            invalid.append(token)
+            continue
+        try:
+            d = int(day_str)
+        except ValueError:
+            invalid.append(token)
+            continue
+        if not (1 <= d <= last_day):
+            invalid.append(token)
+            continue
+        result[d] = shift
+    return dict(sorted(result.items())), invalid
+
+
+def load_existing_requests(year: int, month: int) -> tuple[dict[str, list[int]], dict[str, dict[int, str]]]:
+    """既存のrequests.csvから指定年月の希望休・希望シフトを読み込む"""
     path = DATA_DIR / "requests.csv"
-    result = {}
+    offs: dict[str, list[int]] = {}
+    shifts: dict[str, dict[int, str]] = {}
     if not path.exists():
-        return result
+        return offs, shifts
     with open(path, encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
             if not row.get("名前") or row.get("名前", "").strip().startswith("#"):
                 continue
-            if row.get("希望種別", "").strip() != "希望休":
+            req_type = row.get("希望種別", "").strip()
+            if req_type not in ("希望休", "希望シフト"):
                 continue
             try:
                 d = datetime.date.fromisoformat(row["日付"].strip())
             except (ValueError, AttributeError):
                 continue
-            if d.year == year and d.month == month:
-                result.setdefault(row["名前"].strip(), []).append(d.day)
-    return result
+            if d.year != year or d.month != month:
+                continue
+            name = row["名前"].strip()
+            if req_type == "希望休":
+                offs.setdefault(name, []).append(d.day)
+            else:
+                shift = row.get("シフト", "").strip()
+                if shift:
+                    shifts.setdefault(name, {})[d.day] = shift
+    return offs, shifts
 
 
 FIELDNAMES = ["名前", "日付", "希望種別", "シフト", "備考"]
@@ -119,7 +156,7 @@ def _push_to_github(content: str):
 
     # ファイルを更新
     body: dict = {
-        "message": "希望休データを更新",
+        "message": "希望休・希望出勤データを更新",
         "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
     }
     if sha:
@@ -137,8 +174,9 @@ def _push_to_github(content: str):
         st.warning(f"GitHubへの保存に失敗しました（{e.code}）。ローカルには保存済みです。")
 
 
-def save_requests(year: int, month: int, requests: dict[str, list[int]]):
-    """指定年月の希望休をrequests.csvに書き込み、GitHubにも反映する"""
+def save_requests(year: int, month: int, requests: dict[str, list[int]],
+                  shift_requests: dict[str, dict[int, str]] | None = None):
+    """指定年月の希望休・希望シフトをrequests.csvに書き込み、GitHubにも反映する"""
     path = DATA_DIR / "requests.csv"
 
     # 既存データ読み込み（他の月分を保持）
@@ -159,7 +197,7 @@ def save_requests(year: int, month: int, requests: dict[str, list[int]]):
                 except (ValueError, AttributeError):
                     continue
 
-    # 新しい希望休を追加
+    # 新しい希望休・希望シフトを追加
     new_rows = []
     for name, days in requests.items():
         for day in sorted(days):
@@ -168,6 +206,15 @@ def save_requests(year: int, month: int, requests: dict[str, list[int]]):
                 "日付": f"{year}-{month:02d}-{day:02d}",
                 "希望種別": "希望休",
                 "シフト": "",
+                "備考": "",
+            })
+    for name, day_shifts in (shift_requests or {}).items():
+        for day in sorted(day_shifts):
+            new_rows.append({
+                "名前": name,
+                "日付": f"{year}-{month:02d}-{day:02d}",
+                "希望種別": "希望シフト",
+                "シフト": day_shifts[day],
                 "備考": "",
             })
 
@@ -184,14 +231,14 @@ def save_requests(year: int, month: int, requests: dict[str, list[int]]):
 
 
 # ── タブ ──────────────────────────────────────────────────────────────
-tab1, tab2 = st.tabs(["📅 希望休入力", "📊 勤務表作成"])
+tab1, tab2 = st.tabs(["📅 希望入力", "📊 勤務表作成"])
 
 
 # ══════════════════════════════════════════════════════════════════════
-# TAB1: 希望休入力
+# TAB1: 希望休・希望シフト入力
 # ══════════════════════════════════════════════════════════════════════
 with tab1:
-    st.header("希望休入力")
+    st.header("希望入力")
     if DEMO_MODE:
         st.info("デモ表示中：スタッフ名は仮名で表示しています。")
 
@@ -204,46 +251,83 @@ with tab1:
 
     _, last_day = calendar.monthrange(req_year, req_month)
     st.write(f"対象：**{req_year}年{req_month}月**（1〜{last_day}日）")
-    st.caption("休みたい日を半角・全角どちらでも入力できます。複数の日はスペースまたはカンマで区切ってください。例：3 15 25 　または　３、１５、２５　※入力された日はExcelで「休」が赤文字で表示されます。")
+    st.caption("**希望休**：休みたい日を半角・全角どちらでも入力できます。複数の日はスペースまたはカンマで区切ってください。例：3 15 25 　または　３、１５、２５　※入力された日はExcelで「休」が赤文字で表示されます。")
+    st.caption(
+        "**希望出勤（希望シフト）**：「日にち:シフト」の形式で入力します。"
+        f"例：3:日 15:A 20:準　※使えるシフト：{' / '.join(ALLOWED_SHIFTS)}"
+    )
     st.divider()
 
     staff_names = load_staff_names()
     unknown_names = unknown_demo_names(staff_names)
     if unknown_names:
         st.warning(f"デモ用の仮名が未登録のスタッフが{len(unknown_names)}名います。汎用仮名で表示します。")
-    existing = load_existing_requests(req_year, req_month)
+    existing_offs, existing_shifts = load_existing_requests(req_year, req_month)
 
     inputs = {}
+    shift_inputs = {}
     for name in staff_names:
-        existing_days = existing.get(name, [])
-        default_text = " ".join(str(d) for d in existing_days)
-        val = st.text_input(
-            display_name(name),
-            value=default_text,
-            placeholder="例：3, 15, 25",
-            key=f"req_{name}",
-        )
-        inputs[name] = val
+        st.markdown(f"**{display_name(name)}**")
+        col_off, col_shift = st.columns(2)
+        with col_off:
+            inputs[name] = st.text_input(
+                "希望休",
+                value=" ".join(str(d) for d in existing_offs.get(name, [])),
+                placeholder="例：3, 15, 25",
+                key=f"req_{name}",
+            )
+        with col_shift:
+            existing_day_shifts = existing_shifts.get(name, {})
+            shift_inputs[name] = st.text_input(
+                "希望出勤",
+                value=" ".join(f"{d}:{existing_day_shifts[d]}" for d in sorted(existing_day_shifts)),
+                placeholder="例：3:日 15:A",
+                key=f"reqshift_{name}",
+            )
 
     if st.button("保存する", type="primary", key="save_requests"):
         requests_to_save = {}
+        shifts_to_save = {}
         errors = []
-        for name, text in inputs.items():
-            if not text.strip():
-                continue
-            days = normalize_days(text, req_year, req_month)
-            if days:
-                requests_to_save[name] = days
-            else:
-                errors.append(f"{display_name(name)}：入力値が無効です（{text}）")
+        for name in staff_names:
+            text = inputs[name]
+            if text.strip():
+                days = normalize_days(text, req_year, req_month)
+                if days:
+                    requests_to_save[name] = days
+                else:
+                    errors.append(f"{display_name(name)}：希望休の入力値が無効です（{text}）")
+
+            shift_text = shift_inputs[name]
+            if shift_text.strip():
+                day_shifts, invalid = normalize_shift_requests(shift_text, req_year, req_month)
+                if invalid:
+                    errors.append(
+                        f"{display_name(name)}：希望出勤の入力値が無効です（{' '.join(invalid)}）"
+                        "　※「日にち:シフト」の形式で入力してください"
+                    )
+                elif day_shifts:
+                    shifts_to_save[name] = day_shifts
+
+            # 同じ日に希望休と希望出勤が入っている場合はエラー
+            conflicts = sorted(set(requests_to_save.get(name, [])) & set(shifts_to_save.get(name, {})))
+            if conflicts:
+                errors.append(
+                    f"{display_name(name)}：{('・'.join(f'{d}日' for d in conflicts))}が"
+                    "希望休と希望出勤の両方に入っています"
+                )
 
         if errors:
             for e in errors:
                 st.warning(e)
         else:
-            save_requests(req_year, req_month, requests_to_save)
-            total = sum(len(v) for v in requests_to_save.values())
-            st.success(f"保存しました。{req_year}年{req_month}月の希望休：{total}件")
+            save_requests(req_year, req_month, requests_to_save, shifts_to_save)
+            total_off = sum(len(v) for v in requests_to_save.values())
+            total_shift = sum(len(v) for v in shifts_to_save.values())
+            st.success(
+                f"保存しました。{req_year}年{req_month}月の希望休：{total_off}件／"
+                f"希望出勤：{total_shift}件"
+            )
 
 
 # ══════════════════════════════════════════════════════════════════════
